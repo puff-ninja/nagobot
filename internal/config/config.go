@@ -38,11 +38,10 @@ type ChannelsConfig struct {
 
 // DiscordConfig holds Discord channel settings.
 type DiscordConfig struct {
-	Enabled    bool     `json:"enabled"`
-	Token      string   `json:"token"`
-	AllowFrom  []string `json:"allowFrom"`
-	GatewayURL string   `json:"gatewayUrl"`
-	Intents    int      `json:"intents"`
+	Enabled   bool     `json:"enabled"`
+	Token     string   `json:"token"`
+	AllowFrom []string `json:"allowFrom"`
+	Intents   int      `json:"intents"`
 }
 
 // ProvidersConfig holds LLM provider settings.
@@ -99,8 +98,7 @@ func DefaultConfig() *Config {
 		},
 		Channels: ChannelsConfig{
 			Discord: DiscordConfig{
-				GatewayURL: "wss://gateway.discord.gg/?v=10&encoding=json",
-				Intents:    37377,
+				Intents: 37377,
 			},
 		},
 		Tools: ToolsConfig{

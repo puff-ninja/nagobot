@@ -66,10 +66,10 @@ func (t *ShellTool) Parameters() map[string]any {
 	}
 }
 
-func (t *ShellTool) Execute(ctx context.Context, params map[string]any) (string, error) {
+func (t *ShellTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
 	command, err := requireStringParam(params, "command")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	cwd := getStringParam(params, "working_dir")
 	if cwd == "" {
@@ -77,7 +77,7 @@ func (t *ShellTool) Execute(ctx context.Context, params map[string]any) (string,
 	}
 
 	if msg := t.guardCommand(command, cwd); msg != "" {
-		return msg, nil
+		return ToolResult{Content: msg}, nil
 	}
 
 	timeout := time.Duration(t.Timeout) * time.Second
@@ -106,7 +106,7 @@ func (t *ShellTool) Execute(ctx context.Context, params map[string]any) (string,
 
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Sprintf("Error: Command timed out after %d seconds", t.Timeout), nil
+			return ToolResult{Content: fmt.Sprintf("Error: Command timed out after %d seconds", t.Timeout)}, nil
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			parts = append(parts, fmt.Sprintf("\nExit code: %d", exitErr.ExitCode()))
@@ -118,7 +118,7 @@ func (t *ShellTool) Execute(ctx context.Context, params map[string]any) (string,
 		result = strings.Join(parts, "\n")
 	}
 
-	return truncateString(result, 10000), nil
+	return ToolResult{Content: truncateString(result, 10000)}, nil
 }
 
 func (t *ShellTool) guardCommand(command, cwd string) string {

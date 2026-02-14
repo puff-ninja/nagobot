@@ -48,27 +48,27 @@ func (t *ReadFileTool) Parameters() map[string]any {
 	}
 }
 
-func (t *ReadFileTool) Execute(_ context.Context, params map[string]any) (string, error) {
+func (t *ReadFileTool) Execute(_ context.Context, params map[string]any) (ToolResult, error) {
 	path, err := requireStringParam(params, "path")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	resolved, err := resolvePath(path, t.AllowedDir)
 	if err != nil {
-		return fmt.Sprintf("Error: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error: %s", err)}, nil
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return fmt.Sprintf("Error: File not found: %s", path), nil
+		return ToolResult{Content: fmt.Sprintf("Error: File not found: %s", path)}, nil
 	}
 	if info.IsDir() {
-		return fmt.Sprintf("Error: Not a file: %s", path), nil
+		return ToolResult{Content: fmt.Sprintf("Error: Not a file: %s", path)}, nil
 	}
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return fmt.Sprintf("Error reading file: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error reading file: %s", err)}, nil
 	}
-	return string(data), nil
+	return ToolResult{Content: string(data)}, nil
 }
 
 // WriteFileTool writes content to a file.
@@ -95,23 +95,23 @@ func (t *WriteFileTool) Parameters() map[string]any {
 	}
 }
 
-func (t *WriteFileTool) Execute(_ context.Context, params map[string]any) (string, error) {
+func (t *WriteFileTool) Execute(_ context.Context, params map[string]any) (ToolResult, error) {
 	path, err := requireStringParam(params, "path")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	content := getStringParam(params, "content")
 	resolved, err := resolvePath(path, t.AllowedDir)
 	if err != nil {
-		return fmt.Sprintf("Error: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error: %s", err)}, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
-		return fmt.Sprintf("Error creating directories: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error creating directories: %s", err)}, nil
 	}
 	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
-		return fmt.Sprintf("Error writing file: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error writing file: %s", err)}, nil
 	}
-	return fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path), nil
+	return ToolResult{Content: fmt.Sprintf("Successfully wrote %d bytes to %s", len(content), path)}, nil
 }
 
 // EditFileTool edits a file by replacing text.
@@ -144,38 +144,38 @@ func (t *EditFileTool) Parameters() map[string]any {
 	}
 }
 
-func (t *EditFileTool) Execute(_ context.Context, params map[string]any) (string, error) {
+func (t *EditFileTool) Execute(_ context.Context, params map[string]any) (ToolResult, error) {
 	path, err := requireStringParam(params, "path")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	oldText, err := requireStringParam(params, "old_text")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	newText := getStringParam(params, "new_text")
 
 	resolved, err := resolvePath(path, t.AllowedDir)
 	if err != nil {
-		return fmt.Sprintf("Error: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error: %s", err)}, nil
 	}
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return fmt.Sprintf("Error: File not found: %s", path), nil
+		return ToolResult{Content: fmt.Sprintf("Error: File not found: %s", path)}, nil
 	}
 	content := string(data)
 	if !strings.Contains(content, oldText) {
-		return "Error: old_text not found in file. Make sure it matches exactly.", nil
+		return ToolResult{Content: "Error: old_text not found in file. Make sure it matches exactly."}, nil
 	}
 	count := strings.Count(content, oldText)
 	if count > 1 {
-		return fmt.Sprintf("Warning: old_text appears %d times. Please provide more context to make it unique.", count), nil
+		return ToolResult{Content: fmt.Sprintf("Warning: old_text appears %d times. Please provide more context to make it unique.", count)}, nil
 	}
 	newContent := strings.Replace(content, oldText, newText, 1)
 	if err := os.WriteFile(resolved, []byte(newContent), 0o644); err != nil {
-		return fmt.Sprintf("Error writing file: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error writing file: %s", err)}, nil
 	}
-	return fmt.Sprintf("Successfully edited %s", path), nil
+	return ToolResult{Content: fmt.Sprintf("Successfully edited %s", path)}, nil
 }
 
 // ListDirTool lists directory contents.
@@ -198,28 +198,28 @@ func (t *ListDirTool) Parameters() map[string]any {
 	}
 }
 
-func (t *ListDirTool) Execute(_ context.Context, params map[string]any) (string, error) {
+func (t *ListDirTool) Execute(_ context.Context, params map[string]any) (ToolResult, error) {
 	path, err := requireStringParam(params, "path")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	resolved, err := resolvePath(path, t.AllowedDir)
 	if err != nil {
-		return fmt.Sprintf("Error: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error: %s", err)}, nil
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return fmt.Sprintf("Error: Directory not found: %s", path), nil
+		return ToolResult{Content: fmt.Sprintf("Error: Directory not found: %s", path)}, nil
 	}
 	if !info.IsDir() {
-		return fmt.Sprintf("Error: Not a directory: %s", path), nil
+		return ToolResult{Content: fmt.Sprintf("Error: Not a directory: %s", path)}, nil
 	}
 	entries, err := os.ReadDir(resolved)
 	if err != nil {
-		return fmt.Sprintf("Error listing directory: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error listing directory: %s", err)}, nil
 	}
 	if len(entries) == 0 {
-		return fmt.Sprintf("Directory %s is empty", path), nil
+		return ToolResult{Content: fmt.Sprintf("Directory %s is empty", path)}, nil
 	}
 
 	// Sort entries
@@ -235,5 +235,5 @@ func (t *ListDirTool) Execute(_ context.Context, params map[string]any) (string,
 		}
 		lines = append(lines, prefix+e.Name())
 	}
-	return strings.Join(lines, "\n"), nil
+	return ToolResult{Content: strings.Join(lines, "\n")}, nil
 }

@@ -2,7 +2,6 @@ package tool
 
 import (
 	"context"
-	"fmt"
 )
 
 // SpawnFunc is the function signature for spawning a subagent.
@@ -50,10 +49,10 @@ func (t *SpawnTool) Parameters() map[string]any {
 	}
 }
 
-func (t *SpawnTool) Execute(ctx context.Context, params map[string]any) (string, error) {
+func (t *SpawnTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
 	task, err := requireStringParam(params, "task")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	label := getStringParam(params, "label")
 
@@ -67,5 +66,5 @@ func (t *SpawnTool) Execute(ctx context.Context, params map[string]any) (string,
 	}
 
 	result := t.spawnFunc(ctx, task, label, channel, chatID)
-	return fmt.Sprintf("%s", result), nil
+	return ToolResult{Content: result}, nil
 }

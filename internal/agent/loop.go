@@ -221,6 +221,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	// ReAct loop
 	var finalContent string
 	var toolsUsed []string
+	var mediaFiles []string
 	for i := 0; i < l.maxIterations; i++ {
 		resp, err := l.provider.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
@@ -254,7 +255,10 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 				argsJSON, _ := json.Marshal(tc.Arguments)
 				slog.Info("Tool call", "tool", tc.Name, "args", truncate(string(argsJSON), 200))
 				result := l.tools.Execute(ctx, tc.Name, tc.Arguments)
-				messages = l.context.AddToolResult(messages, tc.ID, tc.Name, result)
+				if len(result.Media) > 0 {
+					mediaFiles = append(mediaFiles, result.Media...)
+				}
+				messages = l.context.AddToolResult(messages, tc.ID, tc.Name, result.Content)
 			}
 
 			// Interleaved CoT: reflect before next action
@@ -289,6 +293,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 		Channel:  msg.Channel,
 		ChatID:   msg.ChatID,
 		Content:  finalContent,
+		Media:    mediaFiles,
 		Metadata: msg.Metadata,
 	}, nil
 }

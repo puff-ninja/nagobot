@@ -7,12 +7,18 @@ import (
 	"strings"
 )
 
+// ToolResult holds the output of a tool execution.
+type ToolResult struct {
+	Content string   // textual result for the LLM
+	Media   []string // file paths to attach to the outbound message
+}
+
 // Tool is the interface for agent tools.
 type Tool interface {
 	Name() string
 	Description() string
 	Parameters() map[string]any // JSON Schema
-	Execute(ctx context.Context, params map[string]any) (string, error)
+	Execute(ctx context.Context, params map[string]any) (ToolResult, error)
 }
 
 // Registry manages tool registration and execution.
@@ -53,16 +59,16 @@ func (r *Registry) Definitions() []map[string]any {
 
 // Execute runs a tool by name with the given parameters.
 // Errors are returned as strings (error isolation — lets LLM decide recovery).
-func (r *Registry) Execute(ctx context.Context, name string, params map[string]any) string {
+func (r *Registry) Execute(ctx context.Context, name string, params map[string]any) ToolResult {
 	t := r.tools[name]
 	if t == nil {
-		return fmt.Sprintf("Error: Tool '%s' not found", name)
+		return ToolResult{Content: fmt.Sprintf("Error: Tool '%s' not found", name)}
 	}
 
 	result, err := t.Execute(ctx, params)
 	if err != nil {
 		slog.Error("tool execution error", "tool", name, "err", err)
-		return fmt.Sprintf("Error executing %s: %s", name, err)
+		return ToolResult{Content: fmt.Sprintf("Error executing %s: %s", name, err)}
 	}
 	return result
 }

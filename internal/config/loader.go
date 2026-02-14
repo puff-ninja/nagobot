@@ -67,9 +67,6 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Agents.Defaults.ContextLimit == 0 {
 		cfg.Agents.Defaults.ContextLimit = 80000
 	}
-	if cfg.Channels.Discord.GatewayURL == "" {
-		cfg.Channels.Discord.GatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
-	}
 	if cfg.Channels.Discord.Intents == 0 {
 		cfg.Channels.Discord.Intents = 37377
 	}

@@ -49,13 +49,13 @@ func (t *WebSearchTool) Parameters() map[string]any {
 	}
 }
 
-func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (string, error) {
+func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
 	query, err := requireStringParam(params, "query")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	if t.apiKey == "" {
-		return "Error: BRAVE_API_KEY not configured", nil
+		return ToolResult{Content: "Error: BRAVE_API_KEY not configured"}, nil
 	}
 
 	count := t.maxResults
@@ -78,13 +78,13 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (str
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return fmt.Sprintf("Error: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error: %s", err)}, nil
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return fmt.Sprintf("Error: Brave API returned HTTP %d", resp.StatusCode), nil
+		return ToolResult{Content: fmt.Sprintf("Error: Brave API returned HTTP %d", resp.StatusCode)}, nil
 	}
 
 	var data struct {
@@ -97,12 +97,12 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (str
 		} `json:"web"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
-		return fmt.Sprintf("Error parsing results: %s", err), nil
+		return ToolResult{Content: fmt.Sprintf("Error parsing results: %s", err)}, nil
 	}
 
 	results := data.Web.Results
 	if len(results) == 0 {
-		return fmt.Sprintf("No results for: %s", query), nil
+		return ToolResult{Content: fmt.Sprintf("No results for: %s", query)}, nil
 	}
 
 	var lines []string
@@ -116,7 +116,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (str
 			lines = append(lines, fmt.Sprintf("   %s", item.Description))
 		}
 	}
-	return strings.Join(lines, "\n"), nil
+	return ToolResult{Content: strings.Join(lines, "\n")}, nil
 }
 
 // --- web_fetch ---
@@ -157,10 +157,10 @@ func (t *WebFetchTool) Parameters() map[string]any {
 	}
 }
 
-func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (string, error) {
+func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (ToolResult, error) {
 	rawURL, err := requireStringParam(params, "url")
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	extractMode := getStringParam(params, "extractMode")
@@ -175,7 +175,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (stri
 
 	// Validate URL
 	if ok, errMsg := validateURL(rawURL); !ok {
-		return jsonResult(map[string]any{"error": "URL validation failed: " + errMsg, "url": rawURL}), nil
+		return ToolResult{Content: jsonResult(map[string]any{"error": "URL validation failed: " + errMsg, "url": rawURL})}, nil
 	}
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
@@ -183,21 +183,21 @@ func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (stri
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return jsonResult(map[string]any{"error": err.Error(), "url": rawURL}), nil
+		return ToolResult{Content: jsonResult(map[string]any{"error": err.Error(), "url": rawURL})}, nil
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return jsonResult(map[string]any{"error": err.Error(), "url": rawURL}), nil
+		return ToolResult{Content: jsonResult(map[string]any{"error": err.Error(), "url": rawURL})}, nil
 	}
 
 	if resp.StatusCode >= 400 {
-		return jsonResult(map[string]any{
+		return ToolResult{Content: jsonResult(map[string]any{
 			"error":  fmt.Sprintf("HTTP %d", resp.StatusCode),
 			"url":    rawURL,
 			"status": resp.StatusCode,
-		}), nil
+		})}, nil
 	}
 
 	ctype := resp.Header.Get("Content-Type")
@@ -233,7 +233,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (stri
 		text = text[:maxChars]
 	}
 
-	return jsonResult(map[string]any{
+	return ToolResult{Content: jsonResult(map[string]any{
 		"url":       rawURL,
 		"finalUrl":  resp.Request.URL.String(),
 		"status":    resp.StatusCode,
@@ -241,7 +241,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (stri
 		"truncated": truncated,
 		"length":    len(text),
 		"text":      text,
-	}), nil
+	})}, nil
 }
 
 // --- HTML processing helpers ---

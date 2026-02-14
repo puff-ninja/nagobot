@@ -168,7 +168,7 @@ func (m *SubagentManager) executeTask(ctx context.Context, taskID, task string) 
 				"role":         "tool",
 				"tool_call_id": tc.ID,
 				"name":         tc.Name,
-				"content":      result,
+				"content":      result.Content,
 			})
 		}
 	}
@@ -303,7 +303,7 @@ func ProcessSystemMessage(
 				"role":         "tool",
 				"tool_call_id": tc.ID,
 				"name":         tc.Name,
-				"content":      result,
+				"content":      result.Content,
 			})
 		}
 	}

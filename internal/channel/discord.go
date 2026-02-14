@@ -1,33 +1,26 @@
 package channel
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/bwmarrin/discordgo"
 
 	"github.com/joebot/nagobot/internal/bus"
 	"github.com/joebot/nagobot/internal/config"
 )
 
-const discordAPIBase = "https://discord.com/api/v10"
-
-// Discord implements the Discord gateway WebSocket protocol.
+// Discord implements the Channel interface using discordgo.
 type Discord struct {
-	config     config.DiscordConfig
-	bus        *bus.MessageBus
-	conn       *websocket.Conn
-	seq        *int64
-	httpClient *http.Client
+	config  config.DiscordConfig
+	bus     *bus.MessageBus
+	session *discordgo.Session
 
-	cancel       context.CancelFunc
 	typingMu     sync.Mutex
 	typingCancel map[string]context.CancelFunc
 }
@@ -37,277 +30,180 @@ func NewDiscord(cfg config.DiscordConfig, b *bus.MessageBus) *Discord {
 	return &Discord{
 		config:       cfg,
 		bus:          b,
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		typingCancel: make(map[string]context.CancelFunc),
 	}
 }
 
 func (d *Discord) Name() string { return "discord" }
 
-// Start connects to the Discord gateway and processes events.
+// Start opens the Discord gateway session and blocks until ctx is cancelled.
 func (d *Discord) Start(ctx context.Context) error {
 	if d.config.Token == "" {
 		return fmt.Errorf("discord bot token not configured")
 	}
 
-	ctx, d.cancel = context.WithCancel(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		slog.Info("Connecting to Discord gateway...")
-		conn, _, err := websocket.Dial(ctx, d.config.GatewayURL, nil)
-		if err != nil {
-			slog.Warn("Discord gateway dial error", "err", err)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(5 * time.Second):
-				continue
-			}
-		}
-
-		conn.SetReadLimit(1 << 20) // 1MB
-		d.conn = conn
-		err = d.gatewayLoop(ctx)
-		conn.Close(websocket.StatusNormalClosure, "reconnecting")
-		d.conn = nil
-
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		slog.Warn("Discord gateway disconnected, reconnecting in 5s...", "err", err)
-		time.Sleep(5 * time.Second)
+	session, err := discordgo.New("Bot " + d.config.Token)
+	if err != nil {
+		return fmt.Errorf("create discord session: %w", err)
 	}
+
+	session.Identify.Intents = discordgo.Intent(d.config.Intents)
+	session.AddHandler(d.onMessageCreate)
+
+	if err := session.Open(); err != nil {
+		return fmt.Errorf("open discord session: %w", err)
+	}
+	d.session = session
+	slog.Info("Discord gateway READY")
+
+	<-ctx.Done()
+	return ctx.Err()
 }
 
-// Stop disconnects from Discord.
+// Stop closes the Discord gateway session.
 func (d *Discord) Stop() error {
-	if d.cancel != nil {
-		d.cancel()
-	}
 	d.typingMu.Lock()
 	for _, cancel := range d.typingCancel {
 		cancel()
 	}
 	d.typingCancel = make(map[string]context.CancelFunc)
 	d.typingMu.Unlock()
-	if d.conn != nil {
-		d.conn.Close(websocket.StatusNormalClosure, "shutdown")
+
+	if d.session != nil {
+		return d.session.Close()
 	}
 	return nil
 }
 
-// Send sends a message through the Discord REST API.
+// Send sends a message (with optional file attachments) to a Discord channel.
 func (d *Discord) Send(ctx context.Context, msg *bus.OutboundMessage) error {
 	defer d.stopTyping(msg.ChatID)
 
-	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, msg.ChatID)
-	payload := map[string]any{"content": msg.Content}
-
-	if msg.ReplyTo != "" {
-		payload["message_reference"] = map[string]any{"message_id": msg.ReplyTo}
-		payload["allowed_mentions"] = map[string]any{"replied_user": false}
+	if d.session == nil {
+		return fmt.Errorf("discord session not open")
 	}
 
-	body, _ := json.Marshal(payload)
+	ms := &discordgo.MessageSend{
+		Content: msg.Content,
+	}
 
-	for attempt := 0; attempt < 3; attempt++ {
-		req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bot "+d.config.Token)
+	if msg.ReplyTo != "" {
+		ms.Reference = &discordgo.MessageReference{MessageID: msg.ReplyTo}
+		ms.AllowedMentions = &discordgo.MessageAllowedMentions{
+			RepliedUser: false,
+		}
+	}
 
-		resp, err := d.httpClient.Do(req)
+	// Attach files from local paths.
+	var openFiles []*os.File
+	defer func() {
+		for _, f := range openFiles {
+			f.Close()
+		}
+	}()
+	for _, filePath := range msg.Media {
+		f, err := os.Open(filePath)
 		if err != nil {
-			if attempt == 2 {
-				return fmt.Errorf("send discord message: %w", err)
+			slog.Warn("Failed to open media file", "path", filePath, "err", err)
+			continue
+		}
+		openFiles = append(openFiles, f)
+		ms.Files = append(ms.Files, &discordgo.File{
+			Name:   filepath.Base(filePath),
+			Reader: f,
+		})
+	}
+
+	if len(ms.Files) > 0 {
+		names := make([]string, len(ms.Files))
+		for i, f := range ms.Files {
+			names[i] = f.Name
+		}
+		slog.Info("Discord sending media attachments", "channel", msg.ChatID, "files", names)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := d.session.ChannelMessageSendComplex(msg.ChatID, ms)
+		if err == nil {
+			return nil
+		}
+
+		// Check for rate limiting via discordgo's REST error.
+		if restErr, ok := err.(*discordgo.RESTError); ok {
+			if restErr.Response != nil && restErr.Response.StatusCode == 429 {
+				slog.Warn("Discord rate limited, retrying", "attempt", attempt)
+				time.Sleep(time.Second)
+				continue
 			}
+		}
+
+		lastErr = err
+		if attempt < 2 {
 			time.Sleep(time.Second)
 			continue
 		}
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode == 429 {
-			var rateLimited struct {
-				RetryAfter float64 `json:"retry_after"`
-			}
-			json.Unmarshal(respBody, &rateLimited)
-			wait := time.Duration(rateLimited.RetryAfter * float64(time.Second))
-			if wait <= 0 {
-				wait = time.Second
-			}
-			slog.Warn("Discord rate limited", "retry_after", wait)
-			time.Sleep(wait)
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			return fmt.Errorf("discord API error %d: %s", resp.StatusCode, string(respBody))
-		}
-		return nil
 	}
-	return fmt.Errorf("discord: max retries exceeded")
+	return fmt.Errorf("send discord message: %w", lastErr)
 }
 
-func (d *Discord) gatewayLoop(ctx context.Context) error {
-	for {
-		_, data, err := d.conn.Read(ctx)
-		if err != nil {
-			return err
-		}
-
-		var event struct {
-			Op int            `json:"op"`
-			T  string         `json:"t"`
-			S  *int64         `json:"s"`
-			D  json.RawMessage `json:"d"`
-		}
-		if err := json.Unmarshal(data, &event); err != nil {
-			slog.Warn("Invalid JSON from Discord", "err", err)
-			continue
-		}
-
-		if event.S != nil {
-			d.seq = event.S
-		}
-
-		switch event.Op {
-		case 10: // HELLO
-			var hello struct {
-				HeartbeatInterval int `json:"heartbeat_interval"`
-			}
-			json.Unmarshal(event.D, &hello)
-			go d.heartbeatLoop(ctx, time.Duration(hello.HeartbeatInterval)*time.Millisecond)
-			d.identify(ctx)
-
-		case 0: // DISPATCH
-			switch event.T {
-			case "READY":
-				slog.Info("Discord gateway READY")
-			case "MESSAGE_CREATE":
-				d.handleMessageCreate(ctx, event.D)
-			}
-
-		case 7: // RECONNECT
-			slog.Info("Discord gateway requested reconnect")
-			return nil
-
-		case 9: // INVALID_SESSION
-			slog.Warn("Discord gateway invalid session")
-			return nil
-		}
+func (d *Discord) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.Author == nil || m.Author.Bot {
+		return
 	}
-}
-
-func (d *Discord) identify(ctx context.Context) {
-	identify := map[string]any{
-		"op": 2,
-		"d": map[string]any{
-			"token":   d.config.Token,
-			"intents": d.config.Intents,
-			"properties": map[string]any{
-				"os":      "nagobot",
-				"browser": "nagobot",
-				"device":  "nagobot",
-			},
-		},
+	if m.Author.ID == "" || m.ChannelID == "" {
+		return
 	}
-	data, _ := json.Marshal(identify)
-	d.conn.Write(ctx, websocket.MessageText, data)
-}
-
-func (d *Discord) heartbeatLoop(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			payload := map[string]any{"op": 1, "d": d.seq}
-			data, _ := json.Marshal(payload)
-			if err := d.conn.Write(ctx, websocket.MessageText, data); err != nil {
-				slog.Warn("Discord heartbeat failed", "err", err)
-				return
-			}
-		}
-	}
-}
-
-func (d *Discord) handleMessageCreate(ctx context.Context, raw json.RawMessage) {
-	var msg struct {
-		ID        string `json:"id"`
-		ChannelID string `json:"channel_id"`
-		GuildID   string `json:"guild_id"`
-		Content   string `json:"content"`
-		Author    struct {
-			ID  string `json:"id"`
-			Bot bool   `json:"bot"`
-		} `json:"author"`
-		ReferencedMessage *struct {
-			ID string `json:"id"`
-		} `json:"referenced_message"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
+	if !IsAllowed(m.Author.ID, d.config.AllowFrom) {
 		return
 	}
 
-	if msg.Author.Bot {
-		return
-	}
-	if msg.Author.ID == "" || msg.ChannelID == "" {
-		return
-	}
-	if !IsAllowed(msg.Author.ID, d.config.AllowFrom) {
-		return
-	}
-
-	content := msg.Content
+	content := m.Content
 	if content == "" {
 		content = "[empty message]"
 	}
 
-	d.startTyping(ctx, msg.ChannelID)
+	d.startTyping(m.ChannelID)
 
 	metadata := map[string]any{
-		"message_id": msg.ID,
-		"guild_id":   msg.GuildID,
+		"message_id": m.ID,
+		"guild_id":   m.GuildID,
 	}
-	if msg.ReferencedMessage != nil {
-		metadata["reply_to"] = msg.ReferencedMessage.ID
+	if m.ReferencedMessage != nil {
+		metadata["reply_to"] = m.ReferencedMessage.ID
+	}
+
+	var media []string
+	for _, att := range m.Attachments {
+		media = append(media, att.URL)
 	}
 
 	d.bus.PublishInbound(&bus.InboundMessage{
 		Channel:   "discord",
-		SenderID:  msg.Author.ID,
-		ChatID:    msg.ChannelID,
+		SenderID:  m.Author.ID,
+		ChatID:    m.ChannelID,
 		Content:   content,
 		Timestamp: time.Now(),
+		Media:     media,
 		Metadata:  metadata,
 	})
 }
 
-func (d *Discord) startTyping(ctx context.Context, channelID string) {
+func (d *Discord) startTyping(channelID string) {
 	d.stopTyping(channelID)
 
-	typingCtx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	d.typingMu.Lock()
 	d.typingCancel[channelID] = cancel
 	d.typingMu.Unlock()
 
 	go func() {
-		url := fmt.Sprintf("%s/channels/%s/typing", discordAPIBase, channelID)
 		for {
-			req, _ := http.NewRequestWithContext(typingCtx, "POST", url, nil)
-			req.Header.Set("Authorization", "Bot "+d.config.Token)
-			d.httpClient.Do(req)
-
+			if d.session != nil {
+				d.session.ChannelTyping(channelID)
+			}
 			select {
-			case <-typingCtx.Done():
+			case <-ctx.Done():
 				return
 			case <-time.After(8 * time.Second):
 			}

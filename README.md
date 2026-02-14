@@ -4,7 +4,7 @@ nanobot 的 Go 重写版本。轻量级个人 AI 助手框架，支持 ReAct 工
 
 ## 构建
 
-需要 Go 1.22+。
+需要 Go 1.24+。
 
 ```bash
 cd nagobot
@@ -115,6 +115,14 @@ go install ./cmd/nagobot/
 
 `allowFrom` 为空数组时允许所有用户。
 
+Discord 频道基于 [discordgo](https://github.com/bwmarrin/discordgo) SDK 实现，支持：
+
+- 文本消息收发
+- 文件/图片附件发送（通过 `message` 工具的 `files` 参数）
+- 接收用户发送的附件（URL 传入 Agent）
+- 消息回复引用
+- 输入状态指示（typing indicator）
+
 ## 使用
 
 ### 单条消息
@@ -158,9 +166,50 @@ Agent 在对话中可以调用以下工具：
 | `edit_file` | 查找替换编辑文件 |
 | `list_dir` | 列出目录内容 |
 | `exec` | 执行 shell 命令（带安全防护） |
-| `message` | 向频道发送消息 |
+| `message` | 向频道发送消息，支持附件（`files` 参数传入文件路径列表） |
+| `spawn` | 后台派生子 Agent 执行长时间任务 |
+| `web_search` | 网页搜索（Brave Search API） |
+| `web_fetch` | 抓取网页内容并提取正文 |
 
 `exec` 工具会拦截 `rm -rf`、`dd`、`shutdown` 等危险命令。
+
+工具执行结果通过 `ToolResult` 结构返回，包含文本内容（`Content`）和可选的媒体文件路径（`Media`）。Agent 循环会收集所有工具产生的媒体文件，在最终回复时一并作为附件发送到频道。
+
+## 架构
+
+### 消息流
+
+1. **入站**：消息从 CLI（`ProcessDirect`）或 Discord 频道到达，发布到 `bus.MessageBus` 入站通道。
+2. **Agent 循环**（`internal/agent/loop.go`）：从入站通道读取消息，构建上下文（系统提示 + 会话历史），进入 ReAct 循环 — 调用 LLM，执行工具调用，注入反思提示，直到 LLM 返回无工具调用的最终响应。循环过程中收集工具产生的媒体文件。
+3. **出站**：最终响应（含媒体附件）发布到出站通道，由 `MessageBus.DispatchOutbound` 路由到已订阅的频道处理器。
+
+### 核心抽象
+
+- **`llm.Provider`**（`internal/llm/provider.go`）：统一的 `Chat()` 接口。两个实现：
+  - `OpenAIProvider` — 适配 OpenAI 兼容 API（OpenRouter、DeepSeek 等）
+  - `AnthropicProvider` — 原生 Anthropic Messages API
+- **`tool.Tool`**（`internal/tool/tool.go`）：`Name()`、`Description()`、`Parameters()`（JSON Schema）、`Execute()` 返回 `ToolResult`。通过 `Registry` 管理注册和执行。
+- **`tool.ToolResult`**：工具执行结果，包含 `Content string`（文本，回传 LLM）和 `Media []string`（文件路径，附件发送到频道）。
+- **`channel.Channel`**（`internal/channel/channel.go`）：`Start()`、`Stop()`、`Send()`。Discord 频道基于 discordgo SDK 实现。
+- **`bus.MessageBus`**（`internal/bus/queue.go`）：通过 Go channel 和发布/订阅模式解耦频道与 Agent。
+
+### 上下文与记忆
+
+`ContextBuilder`（`internal/agent/context.go`）从以下来源组装系统提示：
+
+- 运行时信息（时间、操作系统、工作空间路径）
+- 工作空间引导文件：`AGENTS.md`、`SOUL.md`、`USER.md`、`TOOLS.md`、`IDENTITY.md`
+- `MemoryStore`（`internal/agent/memory.go`）：读取 `memory/MEMORY.md`（长期记忆）和当日日期文件（每日笔记）
+
+上下文过长时自动压缩：在 ReAct 循环中通过 `compressMessages` 对旧消息进行摘要，在会话切换间通过 `consolidateMemory` 整理到 `MEMORY.md`。
+
+### 会话
+
+`session.Manager`（`internal/session/manager.go`）将对话历史以 JSONL 文件持久化到 `~/.nagobot/sessions/`，会话以 `channel:chatID` 为键。
+
+### 子 Agent
+
+`SubagentManager`（`internal/agent/subagent.go`）支持通过 `spawn` 工具派生后台子 Agent 执行长时间任务，完成后通过系统消息将结果发布回原始频道。
 
 ## 项目结构
 
@@ -171,29 +220,48 @@ nagobot/
 │   ├── agent/
 │   │   ├── loop.go               # ReAct 循环引擎
 │   │   ├── context.go            # 系统提示词构建
-│   │   └── memory.go             # 文件记忆系统
+│   │   ├── memory.go             # 文件记忆系统
+│   │   ├── skills.go             # 技能加载器
+│   │   └── subagent.go           # 后台子 Agent 系统
 │   ├── bus/
-│   │   ├── events.go             # 消息类型定义
+│   │   ├── events.go             # 消息类型（InboundMessage / OutboundMessage）
 │   │   └── queue.go              # Go channel 消息总线
 │   ├── channel/
 │   │   ├── channel.go            # Channel 接口
-│   │   └── discord.go            # Discord Gateway + REST
+│   │   └── discord.go            # Discord 实现（discordgo SDK）
+│   ├── cli/
+│   │   ├── chat.go               # 交互式 TUI（bubbletea）
+│   │   ├── onboard.go            # 初始化向导
+│   │   ├── status.go             # 状态显示
+│   │   └── styles.go             # 共享样式（lipgloss）
 │   ├── config/
 │   │   ├── config.go             # 配置结构体
 │   │   └── loader.go             # JSON 加载/保存
 │   ├── llm/
 │   │   ├── provider.go           # LLM Provider 接口
-│   │   └── openai.go             # OpenAI 兼容实现
+│   │   ├── openai.go             # OpenAI 兼容实现
+│   │   └── anthropic.go          # Anthropic 原生实现
 │   ├── session/
 │   │   └── manager.go            # JSONL 会话持久化
 │   └── tool/
-│       ├── tool.go               # Tool 接口与 Registry
+│       ├── tool.go               # Tool 接口、ToolResult、Registry
 │       ├── filesystem.go         # 文件操作工具
 │       ├── shell.go              # Shell 执行工具
-│       └── message.go            # 消息发送工具
+│       ├── message.go            # 消息发送工具（含附件支持）
+│       ├── spawn.go              # 子 Agent 派生工具
+│       └── web.go                # 网页搜索/抓取工具
 ├── go.mod
 └── go.sum
 ```
+
+## 依赖
+
+| 依赖 | 用途 |
+|------|------|
+| `github.com/bwmarrin/discordgo` | Discord Bot SDK |
+| `github.com/charmbracelet/bubbletea` | 终端 TUI 框架 |
+| `github.com/charmbracelet/lipgloss` | 终端样式 |
+| `github.com/charmbracelet/bubbles` | TUI 组件（输入框、滚动视图等） |
 
 ## 配置项参考
 
@@ -205,7 +273,9 @@ nagobot/
       "model": "anthropic/claude-sonnet-4-5",
       "maxTokens": 8192,
       "temperature": 0.7,
-      "maxToolIterations": 20
+      "maxToolIterations": 20,
+      "memoryWindow": 50,
+      "contextLimit": 80000
     }
   },
   "providers": {
@@ -220,11 +290,13 @@ nagobot/
       "enabled": false,
       "token": "",
       "allowFrom": [],
-      "gatewayUrl": "wss://gateway.discord.gg/?v=10&encoding=json",
       "intents": 37377
     }
   },
   "tools": {
+    "web": {
+      "search": { "apiKey": "" }
+    },
     "exec": { "timeout": 60 },
     "restrictToWorkspace": false
   }
