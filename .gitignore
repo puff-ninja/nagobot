@@ -1,0 +1,24 @@
+# Compiled binary
+nagobot
+*.exe
+
+# Go build cache and test cache
+*.test
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference / scratch files
+ref/
