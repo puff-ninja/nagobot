@@ -22,6 +22,7 @@ type Loop struct {
 	model         string
 	maxIterations int
 	memoryWindow  int
+	contextLimit  int
 
 	context   *ContextBuilder
 	sessions  *session.Manager
@@ -37,6 +38,7 @@ type LoopConfig struct {
 	Model               string
 	MaxIterations       int
 	MemoryWindow        int
+	ContextLimit        int
 	ExecTimeout         int
 	RestrictToWorkspace bool
 	BraveAPIKey         string
@@ -50,6 +52,9 @@ func NewLoop(cfg LoopConfig) *Loop {
 	if cfg.MemoryWindow <= 0 {
 		cfg.MemoryWindow = 50
 	}
+	if cfg.ContextLimit <= 0 {
+		cfg.ContextLimit = 80000
+	}
 	model := cfg.Model
 	if model == "" {
 		model = cfg.Provider.DefaultModel()
@@ -62,6 +67,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		model:         model,
 		maxIterations: cfg.MaxIterations,
 		memoryWindow:  cfg.MemoryWindow,
+		contextLimit:  cfg.ContextLimit,
 		context:       NewContextBuilder(cfg.Workspace),
 		sessions:      session.NewManager(),
 		tools:         tool.NewRegistry(),
@@ -256,6 +262,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 				"role":    "user",
 				"content": "Reflect on the results and decide next steps.",
 			})
+
+			// Compress context if approaching the token limit
+			if estimateTokens(messages) > l.contextLimit {
+				messages = l.compressMessages(ctx, messages)
+			}
 		} else {
 			finalContent = resp.Content
 			break
@@ -280,6 +291,92 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 		Content:  finalContent,
 		Metadata: msg.Metadata,
 	}, nil
+}
+
+// estimateTokens returns a rough token count for a message array.
+// Uses JSON byte length / 3 as a heuristic (~3 bytes per token on average).
+func estimateTokens(messages []map[string]any) int {
+	data, _ := json.Marshal(messages)
+	return len(data) / 3
+}
+
+// compressMessages uses the LLM to summarize older messages when the context
+// grows too large during a ReAct loop. It keeps the system prompt and recent
+// messages, replacing everything in between with a concise summary.
+func (l *Loop) compressMessages(ctx context.Context, messages []map[string]any) []map[string]any {
+	if len(messages) < 6 {
+		return messages
+	}
+
+	// Walk backwards to find a split point (a "user" message) that leaves
+	// at least 4 messages in the tail.
+	splitIdx := -1
+	for i := len(messages) - 4; i > 1; i-- {
+		if role, _ := messages[i]["role"].(string); role == "user" {
+			splitIdx = i
+			break
+		}
+	}
+	if splitIdx <= 1 {
+		return messages
+	}
+
+	systemMsg := messages[0]
+	toSummarize := messages[1:splitIdx]
+	tail := messages[splitIdx:]
+
+	// Format the messages to summarize
+	var sb strings.Builder
+	for _, m := range toSummarize {
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		if content == "" {
+			continue
+		}
+		if len(content) > 2000 {
+			content = content[:2000] + "... [truncated]"
+		}
+		sb.WriteString(fmt.Sprintf("[%s]: %s\n\n", strings.ToUpper(role), content))
+	}
+
+	prompt := fmt.Sprintf(`Summarize this conversation concisely. Preserve: key facts, user requests, decisions made, tool results, and important context needed to continue the conversation.
+
+%s
+Reply with ONLY the summary, no preamble.`, sb.String())
+
+	resp, err := l.provider.Chat(ctx, llm.ChatRequest{
+		Messages: []map[string]any{
+			{"role": "system", "content": "You are a conversation summarizer. Create a concise summary preserving key information needed to continue the conversation."},
+			{"role": "user", "content": prompt},
+		},
+		Model: l.model,
+	})
+	if err != nil {
+		slog.Error("Context compression failed", "err", err)
+		return messages
+	}
+
+	compressed := make([]map[string]any, 0, 3+len(tail))
+	compressed = append(compressed, systemMsg)
+	compressed = append(compressed, map[string]any{
+		"role":    "user",
+		"content": "[Earlier conversation summary]\n" + resp.Content,
+	})
+	compressed = append(compressed, map[string]any{
+		"role":    "assistant",
+		"content": "Understood. I have the context from the earlier conversation and will continue from here.",
+	})
+	compressed = append(compressed, tail...)
+
+	slog.Info("Context compressed",
+		"original_msgs", len(messages),
+		"summarized", len(toSummarize),
+		"compressed_msgs", len(compressed),
+		"original_tokens", estimateTokens(messages),
+		"compressed_tokens", estimateTokens(compressed),
+	)
+
+	return compressed
 }
 
 // consolidateMemory uses the LLM to condense old session messages into
