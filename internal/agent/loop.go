@@ -223,6 +223,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	var toolsUsed []string
 	var mediaFiles []string
 	for i := 0; i < l.maxIterations; i++ {
+		// Compress context before each LLM call if approaching the limit.
+		if estimateTokens(messages) > l.contextLimit {
+			messages = l.compressMessages(ctx, messages)
+		}
+
 		resp, err := l.provider.Chat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    l.tools.Definitions(),
@@ -230,6 +235,23 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 		})
 		if err != nil {
 			return nil, fmt.Errorf("LLM call: %w", err)
+		}
+
+		// Handle LLM error responses (e.g. context length exceeded).
+		// Try compressing and retrying once before giving up.
+		if resp.FinishReason == "error" {
+			slog.Warn("LLM returned error", "content", truncate(resp.Content, 200))
+			compressed := l.compressMessages(ctx, messages)
+			tokensBefore := estimateTokens(messages)
+			tokensAfter := estimateTokens(compressed)
+			if tokensAfter < tokensBefore {
+				messages = compressed
+				slog.Info("Retrying after context compression",
+					"tokens_before", tokensBefore,
+					"tokens_after", tokensAfter)
+				continue // retry this iteration
+			}
+			return nil, fmt.Errorf("LLM error: %s", truncate(resp.Content, 500))
 		}
 
 		if resp.HasToolCalls() {
@@ -266,11 +288,6 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 				"role":    "user",
 				"content": "Reflect on the results and decide next steps.",
 			})
-
-			// Compress context if approaching the token limit
-			if estimateTokens(messages) > l.contextLimit {
-				messages = l.compressMessages(ctx, messages)
-			}
 		} else {
 			finalContent = resp.Content
 			break
@@ -300,9 +317,13 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 
 // estimateTokens returns a rough token count for a message array.
 // Uses JSON byte length / 3 as a heuristic (~3 bytes per token on average).
+// estimateTokens returns a rough token count for a message array.
+// Uses JSON byte length / 4 as a heuristic. This is intentionally
+// conservative (overestimates token count) so that compression
+// triggers before hitting the actual model limit.
 func estimateTokens(messages []map[string]any) int {
 	data, _ := json.Marshal(messages)
-	return len(data) / 3
+	return len(data) / 4
 }
 
 // compressMessages uses the LLM to summarize older messages when the context
