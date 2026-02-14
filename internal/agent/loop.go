@@ -378,11 +378,13 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 				messages = l.context.AddToolResult(messages, tc.ID, tc.Name, result.Content)
 			}
 
-			// Interleaved CoT: reflect before next action
-			messages = append(messages, map[string]any{
-				"role":    "user",
-				"content": "Reflect on the results and decide next steps.",
-			})
+			// Interleaved CoT: reflect before next action (only in multi-step chains)
+			if i > 0 {
+				messages = append(messages, map[string]any{
+					"role":    "user",
+					"content": "Reflect on the results and decide next steps.",
+				})
+			}
 		} else {
 			finalContent = resp.Content
 			break
