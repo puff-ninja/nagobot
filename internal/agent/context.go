@@ -13,6 +13,7 @@ import (
 type ContextBuilder struct {
 	workspace string
 	memory    *MemoryStore
+	skills    *SkillsLoader
 }
 
 var bootstrapFiles = []string{"AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"}
@@ -22,6 +23,7 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	return &ContextBuilder{
 		workspace: workspace,
 		memory:    NewMemoryStore(workspace),
+		skills:    NewSkillsLoader(workspace),
 	}
 }
 
@@ -37,6 +39,23 @@ func (c *ContextBuilder) BuildSystemPrompt() string {
 
 	if mem := c.memory.GetMemoryContext(); mem != "" {
 		parts = append(parts, "# Memory\n\n"+mem)
+	}
+
+	// Always-loaded skills: include full content
+	if alwaysSkills := c.skills.GetAlwaysSkills(); len(alwaysSkills) > 0 {
+		if content := c.skills.LoadSkillsForContext(alwaysSkills); content != "" {
+			parts = append(parts, "# Active Skills\n\n"+content)
+		}
+	}
+
+	// Available skills: show summary only (agent uses read_file to load)
+	if summary := c.skills.BuildSkillsSummary(); summary != "" {
+		parts = append(parts, `# Skills
+
+The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+Skills with available="false" need dependencies installed first.
+
+`+summary)
 	}
 
 	return strings.Join(parts, "\n\n---\n\n")
@@ -113,6 +132,7 @@ You are nagobot, a helpful AI assistant. You have access to tools that allow you
 Your workspace is at: %s
 - Long-term memory: %s/memory/MEMORY.md
 - History log: %s/memory/HISTORY.md (grep-searchable)
+- Custom skills: %s/skills/{skill-name}/SKILL.md
 
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel.
@@ -120,7 +140,7 @@ For normal conversation, just respond with text - do not call the message tool.
 
 Always be helpful, accurate, and concise. When using tools, think step by step.
 When remembering something important, write to %s/memory/MEMORY.md
-To recall past events, grep %s/memory/HISTORY.md`, now, tz, rt, ws, ws, ws, ws, ws)
+To recall past events, grep %s/memory/HISTORY.md`, now, tz, rt, ws, ws, ws, ws, ws, ws)
 }
 
 func (c *ContextBuilder) loadBootstrapFiles() string {

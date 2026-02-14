@@ -320,6 +320,10 @@ This file stores important information that should persist across sessions.
 `), 0o644)
 		fmt.Println("  Created memory/MEMORY.md")
 	}
+
+	skillsDir := filepath.Join(workspace, "skills")
+	os.MkdirAll(skillsDir, 0o755)
+	fmt.Println("  Created skills/")
 }
 
 // --- helpers ---
