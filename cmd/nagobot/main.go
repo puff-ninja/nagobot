@@ -76,6 +76,7 @@ func cmdAgent() {
 		MemoryWindow:        cfg.Agents.Defaults.MemoryWindow,
 		ExecTimeout:         cfg.Tools.Exec.Timeout,
 		RestrictToWorkspace: cfg.Tools.RestrictToWorkspace,
+		BraveAPIKey:         cfg.Tools.Web.Search.APIKey,
 	})
 
 	// Check for -m flag
@@ -146,6 +147,7 @@ func cmdGateway() {
 		MemoryWindow:        cfg.Agents.Defaults.MemoryWindow,
 		ExecTimeout:         cfg.Tools.Exec.Timeout,
 		RestrictToWorkspace: cfg.Tools.RestrictToWorkspace,
+		BraveAPIKey:         cfg.Tools.Web.Search.APIKey,
 	})
 
 	fmt.Printf("%s Starting nagobot gateway...\n", logo)

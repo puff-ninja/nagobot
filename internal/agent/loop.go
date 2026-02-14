@@ -39,6 +39,7 @@ type LoopConfig struct {
 	MemoryWindow        int
 	ExecTimeout         int
 	RestrictToWorkspace bool
+	BraveAPIKey         string
 }
 
 // NewLoop creates a new agent loop.
@@ -86,6 +87,10 @@ func (l *Loop) registerDefaultTools(cfg LoopConfig) {
 	l.tools.Register(tool.NewShellTool(cfg.Workspace, cfg.ExecTimeout, cfg.RestrictToWorkspace))
 	l.tools.Register(tool.NewMessageTool(cfg.Bus.PublishOutbound))
 	l.tools.Register(tool.NewSpawnTool(l.subagents.Spawn))
+	if cfg.BraveAPIKey != "" {
+		l.tools.Register(tool.NewWebSearchTool(cfg.BraveAPIKey))
+	}
+	l.tools.Register(tool.NewWebFetchTool())
 }
 
 // Run starts the agent loop, processing messages from the bus.

@@ -62,8 +62,19 @@ type ProviderConfig struct {
 
 // ToolsConfig holds tool settings.
 type ToolsConfig struct {
+	Web                 WebToolsConfig `json:"web"`
 	Exec                ExecToolConfig `json:"exec"`
 	RestrictToWorkspace bool           `json:"restrictToWorkspace"`
+}
+
+// WebToolsConfig holds web tool settings.
+type WebToolsConfig struct {
+	Search WebSearchConfig `json:"search"`
+}
+
+// WebSearchConfig holds Brave Search API settings.
+type WebSearchConfig struct {
+	APIKey string `json:"apiKey"`
 }
 
 // ExecToolConfig holds shell exec tool settings.
