@@ -238,22 +238,48 @@ func cmdStatus() {
 
 func cmdOnboard() {
 	cfgPath := config.ConfigPath()
+	scanner := bufio.NewScanner(os.Stdin)
+
+	var cfg *config.Config
 
 	if _, err := os.Stat(cfgPath); err == nil {
 		fmt.Printf("Config already exists at %s\n", cfgPath)
-		fmt.Print("Overwrite? [y/N] ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() && strings.ToLower(strings.TrimSpace(scanner.Text())) != "y" {
-			return
+		fmt.Println("  [u] Upgrade — add new fields, keep your existing values")
+		fmt.Println("  [o] Overwrite — replace with fresh defaults")
+		fmt.Println("  [s] Skip — do not modify config")
+		fmt.Print("Choose [u/o/s]: ")
+		choice := ""
+		if scanner.Scan() {
+			choice = strings.ToLower(strings.TrimSpace(scanner.Text()))
 		}
+		switch choice {
+		case "u", "upgrade":
+			upgraded, err := config.Upgrade()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error upgrading config: %s\n", err)
+				os.Exit(1)
+			}
+			cfg = upgraded
+			fmt.Printf("[ok] Upgraded config at %s\n", cfgPath)
+		case "o", "overwrite":
+			cfg = config.DefaultConfig()
+			if err := config.Save(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving config: %s\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("[ok] Overwritten config at %s\n", cfgPath)
+		default:
+			fmt.Println("[--] Config unchanged")
+			cfg, _ = config.Load()
+		}
+	} else {
+		cfg = config.DefaultConfig()
+		if err := config.Save(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving config: %s\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("[ok] Created config at %s\n", cfgPath)
 	}
-
-	cfg := config.DefaultConfig()
-	if err := config.Save(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving config: %s\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("[ok] Created config at %s\n", cfgPath)
 
 	ws := cfg.WorkspacePath()
 	os.MkdirAll(ws, 0o755)

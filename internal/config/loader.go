@@ -169,6 +169,70 @@ func snakeToCamel(s string) string {
 	return strings.Join(parts, "")
 }
 
+// Upgrade reads the existing config file, deep-merges it on top of
+// DefaultConfig (local values win), and saves the result.
+// New fields from defaults are added; existing user values are preserved.
+func Upgrade() (*Config, error) {
+	path := ConfigPath()
+	defaults := DefaultConfig()
+
+	// Serialize defaults to map
+	defaultData, _ := json.Marshal(defaults)
+	var defaultMap map[string]any
+	json.Unmarshal(defaultData, &defaultMap)
+
+	// Read existing local config as raw map
+	localData, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	var localMap map[string]any
+	if err := json.Unmarshal(localData, &localMap); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	// Deep merge: local values override defaults
+	merged := deepMerge(defaultMap, localMap)
+
+	// Re-serialize through the struct to normalize and apply zero-value defaults
+	cfg := DefaultConfig()
+	converted := convertKeys(merged)
+	reData, _ := json.Marshal(converted)
+	if err := json.Unmarshal(reData, cfg); err != nil {
+		return nil, fmt.Errorf("apply merged config: %w", err)
+	}
+
+	if err := Save(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// deepMerge recursively merges src into dst. Values from src take priority.
+// For nested maps, merge recursively. For all other types, src wins.
+func deepMerge(dst, src map[string]any) map[string]any {
+	result := make(map[string]any, len(dst))
+	for k, v := range dst {
+		result[k] = v
+	}
+	for k, srcVal := range src {
+		dstVal, exists := result[k]
+		if !exists {
+			result[k] = srcVal
+			continue
+		}
+		// If both are maps, merge recursively
+		dstMap, dstOK := dstVal.(map[string]any)
+		srcMap, srcOK := srcVal.(map[string]any)
+		if dstOK && srcOK {
+			result[k] = deepMerge(dstMap, srcMap)
+		} else {
+			result[k] = srcVal
+		}
+	}
+	return result
+}
+
 func containsIgnoreCase(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
