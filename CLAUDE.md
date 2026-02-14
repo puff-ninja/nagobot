@@ -18,7 +18,7 @@ go test ./...
 go vet ./...
 ```
 
-Requires Go 1.22+. Only external dependency is `nhooyr.io/websocket`.
+Requires Go 1.22+. Dependencies: `nhooyr.io/websocket`, `charmbracelet/bubbletea`, `charmbracelet/lipgloss`, `charmbracelet/bubbles`.
 
 ## Architecture
 
@@ -56,7 +56,13 @@ Config lives at `~/.nagobot/config.json`, loaded by `internal/config/loader.go`.
 
 ### CLI Commands
 
-Entry point is `cmd/nagobot/main.go`. Commands: `agent` (CLI chat), `gateway` (long-running channel server), `status`, `onboard` (creates config + workspace templates).
+Entry point is `cmd/nagobot/main.go` (thin dispatcher). CLI UI lives in `internal/cli/`:
+- **`chat.go`** — Interactive chat TUI (bubbletea alt-screen with viewport, textinput, spinner) and single-message mode (inline spinner).
+- **`status.go`** — Styled status display (lipgloss).
+- **`onboard.go`** — Onboard wizard with arrow-key selection (bubbletea) and styled output.
+- **`styles.go`** — Shared lipgloss styles and constants (Logo, Version, color palette).
+
+Agent logs redirect to `~/.nagobot/agent.log` during TUI mode.
 
 ## Missing Features (vs nanobot Python reference)
 
