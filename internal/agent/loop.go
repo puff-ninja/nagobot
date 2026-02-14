@@ -8,10 +8,14 @@ import (
 	"strings"
 
 	"github.com/joebot/nagobot/internal/bus"
+	"github.com/joebot/nagobot/internal/command"
 	"github.com/joebot/nagobot/internal/llm"
 	"github.com/joebot/nagobot/internal/session"
 	"github.com/joebot/nagobot/internal/tool"
 )
+
+// slashHandler is the callback signature for a slash command.
+type slashHandler func(ctx context.Context, sess *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error)
 
 // Loop is the core agent processing engine.
 // It receives messages, builds context, calls the LLM, executes tools, and sends responses.
@@ -28,6 +32,9 @@ type Loop struct {
 	sessions  *session.Manager
 	tools     *tool.Registry
 	subagents *SubagentManager
+
+	slashDefs  []command.Command
+	slashIndex map[string]slashHandler
 }
 
 // LoopConfig holds configuration for creating an agent loop.
@@ -75,9 +82,11 @@ func NewLoop(cfg LoopConfig) *Loop {
 			cfg.Provider, cfg.Workspace, model, cfg.Bus,
 			cfg.ExecTimeout, cfg.RestrictToWorkspace,
 		),
+		slashIndex: make(map[string]slashHandler),
 	}
 
 	l.registerDefaultTools(cfg)
+	l.registerSlashCommands()
 	return l
 }
 
@@ -97,6 +106,104 @@ func (l *Loop) registerDefaultTools(cfg LoopConfig) {
 		l.tools.Register(tool.NewWebSearchTool(cfg.BraveAPIKey))
 	}
 	l.tools.Register(tool.NewWebFetchTool())
+}
+
+func (l *Loop) registerCommand(name, description string, handler slashHandler) {
+	l.slashDefs = append(l.slashDefs, command.Command{Name: name, Description: description})
+	l.slashIndex[name] = handler
+}
+
+// Commands returns the registered slash command definitions.
+func (l *Loop) Commands() []command.Command {
+	return l.slashDefs
+}
+
+func (l *Loop) registerSlashCommands() {
+	l.registerCommand("new", "Start a new conversation", l.handleNew)
+	l.registerCommand("compact", "Compress current context", l.handleCompact)
+	l.registerCommand("context", "Show current context usage", l.handleContext)
+	l.registerCommand("help", "Show available commands", l.handleHelp)
+}
+
+func (l *Loop) handleNew(ctx context.Context, sess *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	l.consolidateMemory(ctx, sess, true)
+	sess.Clear()
+	l.sessions.Save(sess)
+	return &bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: "New session started. Memory consolidated.",
+	}, nil
+}
+
+func (l *Loop) handleCompact(ctx context.Context, sess *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	history := sess.GetHistory(len(sess.Messages))
+	if len(history) < 5 {
+		return &bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: "Not enough context to compress.",
+		}, nil
+	}
+	messages := make([]map[string]any, 0, len(history)+1)
+	messages = append(messages, map[string]any{"role": "system", "content": l.context.BuildSystemPrompt()})
+	messages = append(messages, history...)
+
+	tokensBefore := estimateTokens(messages)
+	compressed := l.compressMessages(ctx, messages)
+	tokensAfter := estimateTokens(compressed)
+
+	if tokensAfter >= tokensBefore {
+		return &bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: "Context is already compact, no further compression possible.",
+		}, nil
+	}
+
+	sess.Messages = nil
+	for _, m := range compressed[1:] {
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		sess.AddMessage(role, content)
+	}
+	l.sessions.Save(sess)
+
+	return &bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: fmt.Sprintf("Context compressed. Tokens: %d → %d (%.0f%% reduction)",
+			tokensBefore, tokensAfter,
+			float64(tokensBefore-tokensAfter)/float64(tokensBefore)*100),
+	}, nil
+}
+
+func (l *Loop) handleContext(_ context.Context, sess *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	history := sess.GetHistory(len(sess.Messages))
+	messages := make([]map[string]any, 0, len(history)+1)
+	messages = append(messages, map[string]any{"role": "system", "content": l.context.BuildSystemPrompt()})
+	messages = append(messages, history...)
+	tokens := estimateTokens(messages)
+	usage := float64(tokens) / float64(l.contextLimit) * 100
+	return &bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: fmt.Sprintf("Context: ~%d tokens (%.0f%% of %d limit), %d messages",
+			tokens, usage, l.contextLimit, len(sess.Messages)),
+	}, nil
+}
+
+func (l *Loop) handleHelp(_ context.Context, _ *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	var sb strings.Builder
+	sb.WriteString("nagobot commands:\n")
+	for _, cmd := range l.slashDefs {
+		sb.WriteString(fmt.Sprintf("/%s — %s\n", cmd.Name, cmd.Description))
+	}
+	return &bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: strings.TrimRight(sb.String(), "\n"),
+	}, nil
 }
 
 // Run starts the agent loop, processing messages from the bus.
@@ -176,23 +283,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	sess := l.sessions.GetOrCreate(msg.SessionKey())
 
 	// Handle slash commands
-	cmd := strings.TrimSpace(strings.ToLower(msg.Content))
-	switch cmd {
-	case "/new":
-		l.consolidateMemory(ctx, sess, true)
-		sess.Clear()
-		l.sessions.Save(sess)
-		return &bus.OutboundMessage{
-			Channel: msg.Channel,
-			ChatID:  msg.ChatID,
-			Content: "New session started. Memory consolidated.",
-		}, nil
-	case "/help":
-		return &bus.OutboundMessage{
-			Channel: msg.Channel,
-			ChatID:  msg.ChatID,
-			Content: "nagobot commands:\n/new — Start a new conversation\n/help — Show available commands",
-		}, nil
+	cmdName := strings.TrimSpace(strings.ToLower(msg.Content))
+	if strings.HasPrefix(cmdName, "/") {
+		if handler, ok := l.slashIndex[cmdName[1:]]; ok {
+			return handler(ctx, sess, msg)
+		}
 	}
 
 	// Consolidate memory if session is too large

@@ -12,24 +12,27 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/joebot/nagobot/internal/bus"
+	"github.com/joebot/nagobot/internal/command"
 	"github.com/joebot/nagobot/internal/config"
 )
 
 // Discord implements the Channel interface using discordgo.
 type Discord struct {
-	config  config.DiscordConfig
-	bus     *bus.MessageBus
-	session *discordgo.Session
+	config   config.DiscordConfig
+	bus      *bus.MessageBus
+	session  *discordgo.Session
+	commands []command.Command
 
 	typingMu     sync.Mutex
 	typingCancel map[string]context.CancelFunc
 }
 
 // NewDiscord creates a new Discord channel.
-func NewDiscord(cfg config.DiscordConfig, b *bus.MessageBus) *Discord {
+func NewDiscord(cfg config.DiscordConfig, b *bus.MessageBus, cmds []command.Command) *Discord {
 	return &Discord{
 		config:       cfg,
 		bus:          b,
+		commands:     cmds,
 		typingCancel: make(map[string]context.CancelFunc),
 	}
 }
@@ -49,12 +52,15 @@ func (d *Discord) Start(ctx context.Context) error {
 
 	session.Identify.Intents = discordgo.Intent(d.config.Intents)
 	session.AddHandler(d.onMessageCreate)
+	session.AddHandler(d.onInteractionCreate)
 
 	if err := session.Open(); err != nil {
 		return fmt.Errorf("open discord session: %w", err)
 	}
 	d.session = session
 	slog.Info("Discord gateway READY")
+
+	d.registerSlashCommands()
 
 	<-ctx.Done()
 	return ctx.Err()
@@ -218,4 +224,75 @@ func (d *Discord) stopTyping(channelID string) {
 		cancel()
 		delete(d.typingCancel, channelID)
 	}
+}
+
+// registerSlashCommands registers application commands with Discord.
+func (d *Discord) registerSlashCommands() {
+	appID := d.session.State.User.ID
+	for _, cmd := range d.commands {
+		acmd := &discordgo.ApplicationCommand{
+			Name:        cmd.Name,
+			Description: cmd.Description,
+		}
+		_, err := d.session.ApplicationCommandCreate(appID, "", acmd)
+		if err != nil {
+			slog.Error("Failed to register slash command", "command", cmd.Name, "err", err)
+		} else {
+			slog.Info("Registered slash command", "command", "/"+cmd.Name)
+		}
+	}
+}
+
+// onInteractionCreate handles Discord slash command interactions.
+func (d *Discord) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i.Type != discordgo.InteractionApplicationCommand {
+		return
+	}
+
+	// Resolve user ID from guild member or DM user.
+	userID := ""
+	if i.Member != nil && i.Member.User != nil {
+		userID = i.Member.User.ID
+	} else if i.User != nil {
+		userID = i.User.ID
+	}
+	if userID == "" {
+		return
+	}
+	if !IsAllowed(userID, d.config.AllowFrom) {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "You are not authorized to use this bot.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	cmdName := i.ApplicationCommandData().Name
+	slog.Info("Slash command received", "command", "/"+cmdName, "user", userID, "channel", i.ChannelID)
+
+	// Acknowledge with an ephemeral response; the actual reply comes
+	// through the normal Send() flow as a regular channel message.
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf("/%s ✓", cmdName),
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+
+	d.startTyping(i.ChannelID)
+
+	d.bus.PublishInbound(&bus.InboundMessage{
+		Channel:   "discord",
+		SenderID:  userID,
+		ChatID:    i.ChannelID,
+		Content:   "/" + cmdName,
+		Timestamp: time.Now(),
+		Metadata: map[string]any{
+			"guild_id": i.GuildID,
+		},
+	})
 }

@@ -136,7 +136,7 @@ func cmdGateway() {
 	// Start Discord if enabled
 	var discord *channel.Discord
 	if cfg.Channels.Discord.Enabled {
-		discord = channel.NewDiscord(cfg.Channels.Discord, msgBus)
+		discord = channel.NewDiscord(cfg.Channels.Discord, msgBus, loop.Commands())
 		msgBus.Subscribe("discord", func(ctx context.Context, msg *bus.OutboundMessage) error {
 			return discord.Send(ctx, msg)
 		})
