@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -19,6 +20,14 @@ import (
 type llmResponseMsg struct {
 	content string
 	err     error
+}
+
+// --- chat config ---
+
+// ChatConfig holds display metadata for the chat TUI.
+type ChatConfig struct {
+	Model     string
+	Workspace string
 }
 
 // --- chat entry ---
@@ -41,12 +50,14 @@ type chatModel struct {
 	loop *agent.Loop
 	ctx  context.Context
 
-	ready  bool
-	width  int
-	height int
+	ready     bool
+	width     int
+	height    int
+	model     string
+	workspace string
 }
 
-func newChatModel(loop *agent.Loop, ctx context.Context) chatModel {
+func newChatModel(loop *agent.Loop, ctx context.Context, cfg ChatConfig) chatModel {
 	ti := textinput.New()
 	ti.Placeholder = "Type a message..."
 	ti.Focus()
@@ -58,11 +69,18 @@ func newChatModel(loop *agent.Loop, ctx context.Context) chatModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(Accent)
 
+	ws := cfg.Workspace
+	if home, err := os.UserHomeDir(); err == nil {
+		ws = strings.Replace(ws, home, "~", 1)
+	}
+
 	return chatModel{
-		input:   ti,
-		spinner: sp,
-		loop:    loop,
-		ctx:     ctx,
+		input:     ti,
+		spinner:   sp,
+		loop:      loop,
+		ctx:       ctx,
+		model:     cfg.Model,
+		workspace: ws,
 	}
 }
 
@@ -75,7 +93,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		vpHeight := msg.Height - 4 // header + 2 dividers + input
+		// Layout: header(1) + divider(1) + viewport + divider(1) + input(1) + status(1) = 5 fixed
+		vpHeight := msg.Height - 5
 		if vpHeight < 1 {
 			vpHeight = 1
 		}
@@ -164,12 +183,19 @@ func (m chatModel) View() string {
 		inputLine = " " + m.input.View()
 	}
 
-	return header + "\n" + divider + "\n" + m.viewport.View() + "\n" + divider + "\n" + inputLine
+	statusBar := m.renderStatusBar()
+
+	return header + "\n" +
+		divider + "\n" +
+		m.viewport.View() + "\n" +
+		divider + "\n" +
+		inputLine + "\n" +
+		statusBar
 }
 
 func (m chatModel) renderHistory() string {
 	if len(m.history) == 0 {
-		return DimStyle.Render("\n  Send a message to start chatting.\n")
+		return m.renderWelcome()
 	}
 
 	var sb strings.Builder
@@ -194,6 +220,31 @@ func (m chatModel) renderHistory() string {
 	return sb.String()
 }
 
+func (m chatModel) renderWelcome() string {
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(RenderBanner())
+	sb.WriteString("\n")
+	sb.WriteString("  " + BoldStyle.Render("Tips for getting started:") + "\n")
+	sb.WriteString(DimStyle.Render("  1. /help for available commands") + "\n")
+	sb.WriteString(DimStyle.Render("  2. Ask questions or give instructions") + "\n")
+	sb.WriteString(DimStyle.Render("  3. /compact to compress context") + "\n")
+	sb.WriteString(DimStyle.Render("  4. /context to check token usage") + "\n")
+	return sb.String()
+}
+
+func (m chatModel) renderStatusBar() string {
+	left := DimStyle.Render(" " + m.workspace)
+	right := DimStyle.Render(m.model + " ")
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+
+	return left + strings.Repeat(" ", gap) + right
+}
+
 func (m chatModel) sendMessage(input string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.loop.ProcessDirect(m.ctx, input, "cli:default")
@@ -207,8 +258,8 @@ func isExitCmd(s string) bool {
 }
 
 // RunChat starts the interactive chat TUI.
-func RunChat(loop *agent.Loop, ctx context.Context) error {
-	m := newChatModel(loop, ctx)
+func RunChat(loop *agent.Loop, ctx context.Context, cfg ChatConfig) error {
+	m := newChatModel(loop, ctx, cfg)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

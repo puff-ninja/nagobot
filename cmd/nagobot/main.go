@@ -16,7 +16,16 @@ import (
 	"github.com/joebot/nagobot/internal/cli"
 	"github.com/joebot/nagobot/internal/config"
 	"github.com/joebot/nagobot/internal/llm"
+	"github.com/joebot/nagobot/internal/logging"
 )
+
+func init() {
+	// Default: colored logging to stderr (used by gateway and other commands).
+	slog.SetDefault(slog.New(logging.NewHandler(os.Stderr, &logging.Options{
+		Level: slog.LevelInfo,
+		Color: true,
+	})))
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -99,7 +108,10 @@ func cmdAgent() {
 			os.Exit(1)
 		}
 	} else {
-		if err := cli.RunChat(loop, ctx); err != nil {
+		if err := cli.RunChat(loop, ctx, cli.ChatConfig{
+			Model:     cfg.Agents.Defaults.Model,
+			Workspace: cfg.WorkspacePath(),
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			os.Exit(1)
 		}
@@ -183,7 +195,9 @@ func redirectLogs() {
 		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 		return
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(f, nil)))
+	slog.SetDefault(slog.New(logging.NewHandler(f, &logging.Options{
+		Level: slog.LevelDebug,
+	})))
 }
 
 func mustLoadConfig() *config.Config {
