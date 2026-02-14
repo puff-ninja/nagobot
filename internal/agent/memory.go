@@ -32,6 +32,22 @@ func (m *MemoryStore) ReadLongTerm() string {
 	return string(data)
 }
 
+// WriteLongTerm writes content to MEMORY.md.
+func (m *MemoryStore) WriteLongTerm(content string) error {
+	return os.WriteFile(filepath.Join(m.memoryDir, "MEMORY.md"), []byte(content), 0o644)
+}
+
+// AppendHistory appends an entry to HISTORY.md.
+func (m *MemoryStore) AppendHistory(entry string) error {
+	f, err := os.OpenFile(filepath.Join(m.memoryDir, "HISTORY.md"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(strings.TrimRight(entry, "\n") + "\n\n")
+	return err
+}
+
 // ReadToday reads today's notes file.
 func (m *MemoryStore) ReadToday() string {
 	path := filepath.Join(m.memoryDir, todayDate()+".md")

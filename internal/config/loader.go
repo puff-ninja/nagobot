@@ -61,6 +61,9 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Agents.Defaults.MaxTokens == 0 {
 		cfg.Agents.Defaults.MaxTokens = 8192
 	}
+	if cfg.Agents.Defaults.MemoryWindow == 0 {
+		cfg.Agents.Defaults.MemoryWindow = 50
+	}
 	if cfg.Channels.Discord.GatewayURL == "" {
 		cfg.Channels.Discord.GatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
 	}

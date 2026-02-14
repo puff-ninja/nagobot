@@ -27,6 +27,7 @@ type AgentDefaults struct {
 	MaxTokens         int     `json:"maxTokens"`
 	Temperature       float64 `json:"temperature"`
 	MaxToolIterations int     `json:"maxToolIterations"`
+	MemoryWindow      int     `json:"memoryWindow"`
 }
 
 // ChannelsConfig holds all channel configurations.
@@ -80,6 +81,7 @@ func DefaultConfig() *Config {
 				MaxTokens:         8192,
 				Temperature:       0.7,
 				MaxToolIterations: 20,
+				MemoryWindow:      50,
 			},
 		},
 		Channels: ChannelsConfig{

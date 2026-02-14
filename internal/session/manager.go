@@ -14,9 +14,10 @@ import (
 
 // Message is a single message in a session.
 type Message struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp,omitempty"`
+	Role      string   `json:"role"`
+	Content   string   `json:"content"`
+	Timestamp string   `json:"timestamp,omitempty"`
+	ToolsUsed []string `json:"tools_used,omitempty"`
 }
 
 // Session holds conversation history for a channel:chat_id pair.
@@ -28,11 +29,12 @@ type Session struct {
 }
 
 // AddMessage appends a message to the session.
-func (s *Session) AddMessage(role, content string) {
+func (s *Session) AddMessage(role, content string, toolsUsed ...string) {
 	s.Messages = append(s.Messages, Message{
 		Role:      role,
 		Content:   content,
 		Timestamp: time.Now().Format(time.RFC3339),
+		ToolsUsed: toolsUsed,
 	})
 	s.UpdatedAt = time.Now()
 }

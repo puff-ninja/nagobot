@@ -111,14 +111,16 @@ You are nagobot, a helpful AI assistant. You have access to tools that allow you
 
 ## Workspace
 Your workspace is at: %s
-- Memory files: %s/memory/MEMORY.md
+- Long-term memory: %s/memory/MEMORY.md
+- History log: %s/memory/HISTORY.md (grep-searchable)
 
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel.
 For normal conversation, just respond with text - do not call the message tool.
 
 Always be helpful, accurate, and concise. When using tools, think step by step.
-When remembering something, write to %s/memory/MEMORY.md`, now, tz, rt, ws, ws, ws)
+When remembering something important, write to %s/memory/MEMORY.md
+To recall past events, grep %s/memory/HISTORY.md`, now, tz, rt, ws, ws, ws, ws, ws)
 }
 
 func (c *ContextBuilder) loadBootstrapFiles() string {

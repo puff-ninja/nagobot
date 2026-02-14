@@ -73,6 +73,7 @@ func cmdAgent() {
 		Workspace:           cfg.WorkspacePath(),
 		Model:               cfg.Agents.Defaults.Model,
 		MaxIterations:       cfg.Agents.Defaults.MaxToolIterations,
+		MemoryWindow:        cfg.Agents.Defaults.MemoryWindow,
 		ExecTimeout:         cfg.Tools.Exec.Timeout,
 		RestrictToWorkspace: cfg.Tools.RestrictToWorkspace,
 	})
@@ -142,6 +143,7 @@ func cmdGateway() {
 		Workspace:           cfg.WorkspacePath(),
 		Model:               cfg.Agents.Defaults.Model,
 		MaxIterations:       cfg.Agents.Defaults.MaxToolIterations,
+		MemoryWindow:        cfg.Agents.Defaults.MemoryWindow,
 		ExecTimeout:         cfg.Tools.Exec.Timeout,
 		RestrictToWorkspace: cfg.Tools.RestrictToWorkspace,
 	})
