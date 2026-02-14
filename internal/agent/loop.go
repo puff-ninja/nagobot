@@ -23,9 +23,10 @@ type Loop struct {
 	maxIterations int
 	memoryWindow  int
 
-	context  *ContextBuilder
-	sessions *session.Manager
-	tools    *tool.Registry
+	context   *ContextBuilder
+	sessions  *session.Manager
+	tools     *tool.Registry
+	subagents *SubagentManager
 }
 
 // LoopConfig holds configuration for creating an agent loop.
@@ -63,6 +64,10 @@ func NewLoop(cfg LoopConfig) *Loop {
 		context:       NewContextBuilder(cfg.Workspace),
 		sessions:      session.NewManager(),
 		tools:         tool.NewRegistry(),
+		subagents: NewSubagentManager(
+			cfg.Provider, cfg.Workspace, model, cfg.Bus,
+			cfg.ExecTimeout, cfg.RestrictToWorkspace,
+		),
 	}
 
 	l.registerDefaultTools(cfg)
@@ -80,6 +85,7 @@ func (l *Loop) registerDefaultTools(cfg LoopConfig) {
 	l.tools.Register(&tool.ListDirTool{AllowedDir: allowedDir})
 	l.tools.Register(tool.NewShellTool(cfg.Workspace, cfg.ExecTimeout, cfg.RestrictToWorkspace))
 	l.tools.Register(tool.NewMessageTool(cfg.Bus.PublishOutbound))
+	l.tools.Register(tool.NewSpawnTool(l.subagents.Spawn))
 }
 
 // Run starts the agent loop, processing messages from the bus.
@@ -136,6 +142,19 @@ func (l *Loop) ProcessDirect(ctx context.Context, content, sessionKey string) (s
 }
 
 func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	// Handle system messages (subagent completion announcements)
+	if msg.Channel == "system" {
+		originChannel, originChatID, response := ProcessSystemMessage(
+			ctx, l.provider, l.model, l.context, l.tools,
+			msg.ChatID, msg.Content, l.maxIterations,
+		)
+		return &bus.OutboundMessage{
+			Channel: originChannel,
+			ChatID:  originChatID,
+			Content: response,
+		}, nil
+	}
+
 	preview := msg.Content
 	if len(preview) > 80 {
 		preview = preview[:80] + "..."
@@ -173,6 +192,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	// Set message tool context
 	if mt, ok := l.tools.Get("message").(*tool.MessageTool); ok {
 		mt.SetContext(msg.Channel, msg.ChatID)
+	}
+
+	// Set spawn tool context
+	if st, ok := l.tools.Get("spawn").(*tool.SpawnTool); ok {
+		st.SetContext(msg.Channel, msg.ChatID)
 	}
 
 	// Build initial messages
