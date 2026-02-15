@@ -135,6 +135,47 @@ Discord 语音消息会自动通过 Google Cloud Speech-to-Text 转录为文字�
 
 `languageCode` 支持 [BCP-47 语言代码](https://cloud.google.com/speech-to-text/docs/languages)，默认为 `zh-CN`。未配置时语音消息不会被处理。
 
+### MCP (Model Context Protocol)
+
+nagobot 支持作为 MCP 客户端连接外部 MCP Server，自动发现并注册 Server 提供的工具。支持 **stdio**（本地子进程）和 **Streamable HTTP**（远程服务）两种传输方式。
+
+#### stdio 模式（本地进程）
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "filesystem": {
+        "command": "mcp-server-filesystem",
+        "args": ["/path/to/dir"],
+        "env": {}
+      }
+    }
+  }
+}
+```
+
+#### HTTP 模式（远程服务）
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "remote-api": {
+        "url": "https://mcp.example.com/mcp",
+        "headers": {
+          "Authorization": "Bearer your-token"
+        }
+      }
+    }
+  }
+}
+```
+
+配置中有 `command` 字段走 stdio 传输，有 `url` 字段走 HTTP 传输。MCP 工具以 `mcp__<server名>__<工具名>` 的格式注册到 Agent 的工具列表中，对 LLM 透明可用。
+
+可在同一配置中混合使用多个 MCP Server，所有 Server 的工具会合并注册。
+
 Discord 频道基于 [discordgo](https://github.com/bwmarrin/discordgo) SDK 实现，支持：
 
 - 文本消息收发
@@ -262,6 +303,12 @@ nagobot/
 │   │   ├── provider.go           # LLM Provider 接口
 │   │   ├── openai.go             # OpenAI 兼容实现
 │   │   └── anthropic.go          # Anthropic 原生实现
+│   ├── mcp/
+│   │   ├── transport.go          # MCP Transport 接口
+│   │   ├── stdio.go              # stdio 传输（本地子进程）
+│   │   ├── http.go               # Streamable HTTP 传输（含 SSE 解析）
+│   │   ├── client.go             # JSON-RPC 2.0 MCP 客户端
+│   │   └── manager.go            # 多 Server 管理 + tool.Tool 适配器
 │   ├── session/
 │   │   └── manager.go            # JSONL 会话持久化
 │   ├── stt/
@@ -327,6 +374,19 @@ nagobot/
     "googleStt": {
       "apiKey": "",
       "languageCode": "zh-CN"
+    }
+  },
+  "mcp": {
+    "servers": {
+      "server-name": {
+        "command": "command-name",
+        "args": [],
+        "env": {}
+      },
+      "remote-server": {
+        "url": "https://example.com/mcp",
+        "headers": {}
+      }
     }
   }
 }
