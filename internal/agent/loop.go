@@ -128,6 +128,7 @@ func (l *Loop) registerSlashCommands() {
 	l.registerCommand("new", "Start a new conversation", l.handleNew)
 	l.registerCommand("compact", "Compress current context", l.handleCompact)
 	l.registerCommand("context", "Show current context usage", l.handleContext)
+	l.registerCommand("cron", "Show scheduled cron jobs", l.handleCron)
 	l.registerCommand("help", "Show available commands", l.handleHelp)
 }
 
@@ -209,6 +210,23 @@ func (l *Loop) handleHelp(_ context.Context, _ *session.Session, msg *bus.Inboun
 		Channel: msg.Channel,
 		ChatID:  msg.ChatID,
 		Content: strings.TrimRight(sb.String(), "\n"),
+	}, nil
+}
+
+func (l *Loop) handleCron(_ context.Context, _ *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	ct, ok := l.tools.Get("cron").(*tool.CronTool)
+	if !ok {
+		return &bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: "Cron service is not enabled.",
+		}, nil
+	}
+	result, _ := ct.Execute(context.Background(), map[string]any{"action": "list"})
+	return &bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: result.Content,
 	}, nil
 }
 
@@ -334,6 +352,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	// Set spawn tool context
 	if st, ok := l.tools.Get("spawn").(*tool.SpawnTool); ok {
 		st.SetContext(msg.Channel, msg.ChatID)
+	}
+
+	// Set cron tool context
+	if ct, ok := l.tools.Get("cron").(*tool.CronTool); ok {
+		ct.SetContext(msg.Channel, msg.ChatID)
 	}
 
 	// Build initial messages

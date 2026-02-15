@@ -16,11 +16,13 @@ import (
 	"github.com/joebot/nagobot/internal/channel"
 	"github.com/joebot/nagobot/internal/cli"
 	"github.com/joebot/nagobot/internal/config"
+	cronpkg "github.com/joebot/nagobot/internal/cron"
 	"github.com/joebot/nagobot/internal/heartbeat"
 	"github.com/joebot/nagobot/internal/llm"
 	"github.com/joebot/nagobot/internal/logging"
 	"github.com/joebot/nagobot/internal/mcp"
 	"github.com/joebot/nagobot/internal/stt"
+	"github.com/joebot/nagobot/internal/tool"
 )
 
 func init() {
@@ -162,6 +164,32 @@ func cmdGateway() {
 		fmt.Printf("  "+cli.OkStyle.Render("✓")+" MCP (%d tools from %v)\n", mcpMgr.ToolCount(), mcpMgr.ServerNames())
 	}
 
+	// Initialize cron service
+	var cronSvc *cronpkg.Service
+	if cfg.Services.Cron.Enabled {
+		storePath := filepath.Join(config.DataDir(), "cron.json")
+		cronSvc = cronpkg.NewService(storePath, func(ctx context.Context, job *cronpkg.Job) (string, error) {
+			sessionKey := ""
+			if job.Payload.Deliver && job.Payload.Channel != "" && job.Payload.To != "" {
+				sessionKey = job.Payload.Channel + ":" + job.Payload.To
+			}
+			resp, err := loop.ProcessDirect(ctx, job.Payload.Message, sessionKey)
+			if err != nil {
+				return "", err
+			}
+			if job.Payload.Deliver && job.Payload.Channel != "" && job.Payload.To != "" {
+				msgBus.PublishOutbound(&bus.OutboundMessage{
+					Channel: job.Payload.Channel,
+					ChatID:  job.Payload.To,
+					Content: resp,
+				})
+			}
+			return resp, nil
+		})
+		loop.ToolRegistry().Register(tool.NewCronTool(cronSvc))
+		fmt.Printf("  "+cli.OkStyle.Render("✓")+" Cron (%d jobs)\n", cronSvc.JobCount())
+	}
+
 	// Start Discord if enabled
 	var discord *channel.Discord
 	if cfg.Channels.Discord.Enabled {
@@ -191,6 +219,10 @@ func cmdGateway() {
 				slog.Error("Discord channel error", "err", err)
 			}
 		}()
+	}
+
+	if cronSvc != nil {
+		go cronSvc.Run(ctx)
 	}
 
 	// Start heartbeat service if enabled

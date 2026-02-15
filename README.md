@@ -135,6 +135,51 @@ Discord 语音消息会自动通过 Google Cloud Speech-to-Text 转录为文字�
 
 `languageCode` 支持 [BCP-47 语言代码](https://cloud.google.com/speech-to-text/docs/languages)，默认为 `zh-CN`。未配置时语音消息不会被处理。
 
+### Heartbeat 服务
+
+Heartbeat 服务定期唤醒 Agent 检查工作空间中的 `HEARTBEAT.md`，执行其中列出的任务。适合需要定期巡检、汇报的场景。
+
+```json
+{
+  "services": {
+    "heartbeat": {
+      "enabled": true,
+      "intervalSeconds": 1800
+    }
+  }
+}
+```
+
+在 `~/.nagobot/workspace/HEARTBEAT.md` 中写入任务指令，Agent 每隔指定时间自动读取并执行。文件为空或仅含标题/注释时跳过。
+
+### Cron 服务
+
+Cron 服务提供应用层定时任务调度，支持三种调度方式：
+
+- **固定间隔**（`every`）— 每隔 N 秒执行一次
+- **Cron 表达式**（`cron`）— 标准 5 字段 cron 表达式（分 时 日 月 周）
+- **定时触发**（`at`）— 指定时间点一次性执行
+
+```json
+{
+  "services": {
+    "cron": {
+      "enabled": true
+    }
+  }
+}
+```
+
+启用后，Agent 获得 `cron` 工具，可在对话中通过自然语言创建定时任务。例如：
+
+- "每天早上9点提醒我看邮件" → Agent 调用 `cron(action="add", cron_expr="0 9 * * *", ...)`
+- "每隔2小时检查服务器" → `cron(action="add", every_seconds=7200, ...)`
+- "明天下午3点提醒我开会" → `cron(action="add", at="2026-02-16T15:00:00", ...)`
+
+任务到期时 Agent 会执行任务内容，并将结果推送到创建任务时所在的频道。任务持久化到 `~/.nagobot/cron.json`，重启不丢失。
+
+纯 Go 实现，不依赖系统 crontab，**Windows、macOS、Linux 均可运行**。
+
 ### MCP (Model Context Protocol)
 
 nagobot 支持作为 MCP 客户端连接外部 MCP Server，自动发现并注册 Server 提供的工具。支持 **stdio**（本地子进程）和 **Streamable HTTP**（远程服务）两种传输方式。
@@ -234,10 +279,23 @@ Agent 在对话中可以调用以下工具：
 | `spawn` | 后台派生子 Agent 执行长时间任务 |
 | `web_search` | 网页搜索（Brave Search API） |
 | `web_fetch` | 抓取网页内容并提取正文 |
+| `cron` | 定时任务管理（add/list/remove），需启用 cron 服务 |
 
 `exec` 工具会拦截 `rm -rf`、`dd`、`shutdown` 等危险命令。
 
 工具执行结果通过 `ToolResult` 结构返回，包含文本内容（`Content`）和可选的媒体文件路径（`Media`）。Agent 循环会收集所有工具产生的媒体文件，在最终回复时一并作为附件发送到频道。
+
+## 斜杠命令
+
+在 Discord 或 CLI 交互中可使用以下命令：
+
+| 命令 | 说明 |
+|------|------|
+| `/new` | 开始新会话，整理并归档当前记忆 |
+| `/compact` | 压缩当前上下文 |
+| `/context` | 显示当前上下文 token 用量 |
+| `/cron` | 显示当前定时任务列表 |
+| `/help` | 显示可用命令 |
 
 ## 架构
 
@@ -308,6 +366,11 @@ nagobot/
 │   ├── config/
 │   │   ├── config.go             # 配置结构体
 │   │   └── loader.go             # JSON 加载/保存
+│   ├── cron/
+│   │   ├── types.go              # 定时任务数据类型
+│   │   └── service.go            # Cron 调度服务（含 cron 表达式解析）
+│   ├── heartbeat/
+│   │   └── service.go            # 定期唤醒服务
 │   ├── llm/
 │   │   ├── provider.go           # LLM Provider 接口
 │   │   ├── openai.go             # OpenAI 兼容实现
@@ -328,6 +391,7 @@ nagobot/
 │       ├── shell.go              # Shell 执行工具
 │       ├── message.go            # 消息发送工具（含附件支持）
 │       ├── spawn.go              # 子 Agent 派生工具
+│       ├── cron.go               # 定时任务管理工具
 │       └── web.go                # 网页搜索/抓取工具
 ├── go.mod
 └── go.sum
@@ -383,6 +447,13 @@ nagobot/
     "googleStt": {
       "apiKey": "",
       "languageCode": "zh-CN"
+    },
+    "heartbeat": {
+      "enabled": false,
+      "intervalSeconds": 1800
+    },
+    "cron": {
+      "enabled": false
     }
   },
   "mcp": {

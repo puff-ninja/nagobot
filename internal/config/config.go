@@ -59,6 +59,12 @@ type ChannelsConfig struct {
 type ServicesConfig struct {
 	GoogleSTT GoogleSTTConfig  `json:"googleStt"`
 	Heartbeat HeartbeatConfig  `json:"heartbeat"`
+	Cron      CronConfig       `json:"cron"`
+}
+
+// CronConfig holds cron service settings.
+type CronConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 // HeartbeatConfig holds heartbeat service settings.
