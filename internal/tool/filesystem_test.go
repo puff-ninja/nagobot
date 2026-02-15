@@ -30,7 +30,6 @@ func TestExtractEmbedPath(t *testing.T) {
 }
 
 func TestReadFileTool_EmbedFSFallback(t *testing.T) {
-	// Create a mock embedded FS
 	mockFS := fstest.MapFS{
 		"builtin_skills/weather/SKILL.md": &fstest.MapFile{
 			Data: []byte("# Weather Skill\nThis is the weather skill content."),
@@ -44,7 +43,6 @@ func TestReadFileTool_EmbedFSFallback(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test 1: Direct embed path
 	result, err := tool.Execute(ctx, map[string]any{"path": "builtin_skills/weather/SKILL.md"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -53,7 +51,6 @@ func TestReadFileTool_EmbedFSFallback(t *testing.T) {
 		t.Errorf("Test 1 (direct path): got %q", result.Content)
 	}
 
-	// Test 2: Workspace-prefixed path should also find embedded file
 	result, err = tool.Execute(ctx, map[string]any{"path": "/Users/joe/.nagobot/workspace/builtin_skills/weather/SKILL.md"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -62,7 +59,6 @@ func TestReadFileTool_EmbedFSFallback(t *testing.T) {
 		t.Errorf("Test 2 (prefixed path): got %q", result.Content)
 	}
 
-	// Test 3: Non-embed path that doesn't exist returns error
 	result, err = tool.Execute(ctx, map[string]any{"path": "/nonexistent/file.txt"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -73,7 +69,6 @@ func TestReadFileTool_EmbedFSFallback(t *testing.T) {
 }
 
 func TestReadFileTool_EmbedWithRestrictToWorkspace(t *testing.T) {
-	// Create a temp workspace directory
 	tmpDir := t.TempDir()
 
 	mockFS := fstest.MapFS{
@@ -89,7 +84,6 @@ func TestReadFileTool_EmbedWithRestrictToWorkspace(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Embedded path should still work even with RestrictToWorkspace
 	result, err := tool.Execute(ctx, map[string]any{"path": "builtin_skills/weather/SKILL.md"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -98,7 +92,6 @@ func TestReadFileTool_EmbedWithRestrictToWorkspace(t *testing.T) {
 		t.Errorf("embed with RestrictToWorkspace: got %q", result.Content)
 	}
 
-	// Workspace-prefixed embed path should also work
 	result, err = tool.Execute(ctx, map[string]any{"path": filepath.Join(tmpDir, "builtin_skills/weather/SKILL.md")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -107,7 +100,6 @@ func TestReadFileTool_EmbedWithRestrictToWorkspace(t *testing.T) {
 		t.Errorf("prefixed embed with RestrictToWorkspace: got %q", result.Content)
 	}
 
-	// Regular file within workspace should still work
 	testFile := filepath.Join(tmpDir, "test.txt")
 	os.WriteFile(testFile, []byte("hello"), 0644)
 	result, err = tool.Execute(ctx, map[string]any{"path": testFile})

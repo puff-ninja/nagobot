@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode"
 )
 
 // ConfigPath returns the default config file path.
@@ -96,17 +95,7 @@ func Save(cfg *Config) error {
 func SaveTo(cfg *Config, path string) error {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-
-	// Convert to camelCase
-	var raw map[string]any
-	json.Unmarshal(data, &raw)
-	camel := convertToCamel(raw)
-
-	out, err := json.MarshalIndent(camel, "", "  ")
+	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -136,47 +125,6 @@ func convertKeys(data any) any {
 	default:
 		return data
 	}
-}
-
-// convertToCamel converts snake_case keys to camelCase for output.
-func convertToCamel(data any) any {
-	switch v := data.(type) {
-	case map[string]any:
-		result := make(map[string]any, len(v))
-		for k, val := range v {
-			result[snakeToCamel(k)] = convertToCamel(val)
-		}
-		return result
-	case []any:
-		result := make([]any, len(v))
-		for i, item := range v {
-			result[i] = convertToCamel(item)
-		}
-		return result
-	default:
-		return data
-	}
-}
-
-func camelToSnake(s string) string {
-	var result []rune
-	for i, r := range s {
-		if unicode.IsUpper(r) && i > 0 {
-			result = append(result, '_')
-		}
-		result = append(result, unicode.ToLower(r))
-	}
-	return string(result)
-}
-
-func snakeToCamel(s string) string {
-	parts := strings.Split(s, "_")
-	for i := 1; i < len(parts); i++ {
-		if len(parts[i]) > 0 {
-			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
-		}
-	}
-	return strings.Join(parts, "")
 }
 
 // Upgrade reads the existing config file, deep-merges it on top of

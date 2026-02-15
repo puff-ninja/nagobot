@@ -61,7 +61,6 @@ func TestSkillsLoader_GetAvailableSkills(t *testing.T) {
 	loader := NewSkillsLoader(t.TempDir())
 
 	available := loader.GetAvailableSkills()
-	// weather requires curl which should be available on macOS
 	var hasWeather bool
 	for _, name := range available {
 		if name == "weather" {
@@ -86,7 +85,6 @@ func TestSkillsLoader_LoadSkillsForContext(t *testing.T) {
 	if !strings.Contains(content, "wttr.in") {
 		t.Error("should contain skill body with wttr.in")
 	}
-	// Should NOT contain frontmatter
 	if strings.Contains(content, "---\nname:") {
 		t.Error("should strip frontmatter")
 	}
