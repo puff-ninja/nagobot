@@ -184,6 +184,8 @@ Discord 频道基于 [discordgo](https://github.com/bwmarrin/discordgo) SDK 实�
 - 接收用户发送的附件（URL 传入 Agent）
 - 消息回复引用
 - 输入状态指示（typing indicator）
+- 长消息自动分割（超过 2000 字符时按行边界拆分为多条消息）
+- 实时进度反馈（长任务执行过程中显示当前阶段，如 `Thinking...`、`Running tool: shell` 等，完成后自动替换为最终回复）
 
 ## 使用
 
@@ -242,8 +244,8 @@ Agent 在对话中可以调用以下工具：
 ### 消息流
 
 1. **入站**：消息从 CLI（`ProcessDirect`）或 Discord 频道到达，发布到 `bus.MessageBus` 入站通道。
-2. **Agent 循环**（`internal/agent/loop.go`）：从入站通道读取消息，构建上下文（系统提示 + 会话历史），进入 ReAct 循环 — 调用 LLM，执行工具调用，注入反思提示，直到 LLM 返回无工具调用的最终响应。循环过程中收集工具产生的媒体文件。
-3. **出站**：最终响应（含媒体附件）发布到出站通道，由 `MessageBus.DispatchOutbound` 路由到已订阅的频道处理器。
+2. **Agent 循环**（`internal/agent/loop.go`）：从入站通道读取消息，构建上下文（系统提示 + 会话历史），进入 ReAct 循环 — 调用 LLM，执行工具调用，注入反思提示，直到 LLM 返回无工具调用的最终响应。循环过程中收集工具产生的媒体文件，并通过 `ProgressFunc` 回调向频道实时推送执行阶段（Thinking / Running tool / Compressing context 等）。
+3. **出站**：最终响应（含媒体附件）发布到出站通道，由 `MessageBus.DispatchOutbound` 路由到已订阅的频道处理器。发送失败时自动尝试分级恢复（去除附件 → 截断内容 → 发送错误提示）。
 
 ### 核心抽象
 
@@ -253,7 +255,14 @@ Agent 在对话中可以调用以下工具：
 - **`tool.Tool`**（`internal/tool/tool.go`）：`Name()`、`Description()`、`Parameters()`（JSON Schema）、`Execute()` 返回 `ToolResult`。通过 `Registry` 管理注册和执行。
 - **`tool.ToolResult`**：工具执行结果，包含 `Content string`（文本，回传 LLM）和 `Media []string`（文件路径，附件发送到频道）。
 - **`channel.Channel`**（`internal/channel/channel.go`）：`Start()`、`Stop()`、`Send()`。Discord 频道基于 discordgo SDK 实现。
-- **`bus.MessageBus`**（`internal/bus/queue.go`）：通过 Go channel 和发布/订阅模式解耦频道与 Agent。
+- **`bus.MessageBus`**（`internal/bus/queue.go`）：通过 Go channel 和发布/订阅模式解耦频道与 Agent。出站消息发送失败时执行分级恢复策略（去除附件重试 → 截断内容重试 → 发送用户友好的错误通知）。
+
+### 容错与重试
+
+- **LLM 调用重试**：所有 LLM API 调用（主循环、子 Agent、系统消息处理）通过 `chatWithRetry` 自动重试，最多 3 次，指数退避（2s、4s），适用于网络抖动、限流、模型过载等瞬时错误。
+- **上下文压缩**：LLM 返回 context 超长错误时自动压缩旧消息并重试。
+- **出站恢复**：消息发送失败时，依次尝试去除附件、截断内容、发送简短错误通知。
+- **用户友好错误**：所有面向用户的错误消息为通俗表达，不暴露技术细节，技术信息仅记录到日志。
 
 ### 上下文与记忆
 
