@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -301,7 +302,10 @@ func (p *AnthropicProvider) parseResponse(data []byte) (*ChatResponse, error) {
 		case "tool_use":
 			var args map[string]any
 			if err := json.Unmarshal(block.Input, &args); err != nil {
-				args = map[string]any{}
+				slog.Warn("failed to parse tool call arguments", "tool", block.Name, "input", string(block.Input), "err", err)
+				args = map[string]any{"raw": string(block.Input)}
+			} else if len(args) == 0 {
+				slog.Warn("LLM returned empty arguments for tool call", "tool", block.Name)
 			}
 			result.ToolCalls = append(result.ToolCalls, ToolCallRequest{
 				ID:        block.ID,

@@ -129,6 +129,7 @@ func (l *Loop) registerSlashCommands() {
 	l.registerCommand("compact", "Compress current context", l.handleCompact)
 	l.registerCommand("context", "Show current context usage", l.handleContext)
 	l.registerCommand("cron", "Show scheduled cron jobs", l.handleCron)
+	l.registerCommand("stop", "Stop current processing", l.handleStop)
 	l.registerCommand("help", "Show available commands", l.handleHelp)
 }
 
@@ -230,29 +231,89 @@ func (l *Loop) handleCron(_ context.Context, _ *session.Session, msg *bus.Inboun
 	}, nil
 }
 
+func (l *Loop) handleStop(_ context.Context, _ *session.Session, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
+	return &bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: "Stopped.",
+	}, nil
+}
+
 // Run starts the agent loop, processing messages from the bus.
+// Messages are processed in a goroutine so that new inbound messages can
+// interrupt the current task. When a message arrives for a session that is
+// already being processed, the active task is cancelled and the new message
+// is processed instead.
 // Blocks until ctx is cancelled.
 func (l *Loop) Run(ctx context.Context) {
 	slog.Info("Agent loop started")
+
+	type activeTask struct {
+		cancel context.CancelFunc
+		done   <-chan struct{}
+		key    string
+	}
+	var current *activeTask
+
 	for {
+		var doneCh <-chan struct{}
+		if current != nil {
+			doneCh = current.done
+		}
+
 		select {
 		case <-ctx.Done():
+			if current != nil {
+				current.cancel()
+			}
 			slog.Info("Agent loop stopping")
 			return
+
+		case <-doneCh:
+			current = nil
+
 		case msg := <-l.bus.Inbound:
-			resp, err := l.processMessage(ctx, msg)
-			if err != nil {
-				slog.Error("processing message", "err", err)
-				l.bus.PublishOutbound(&bus.OutboundMessage{
-					Channel: msg.Channel,
-					ChatID:  msg.ChatID,
-					Content: "Sorry, I ran into a technical issue while processing your message. Please try again, or start a new session with /new if the problem persists.",
-				})
-				continue
+			if current != nil {
+				if current.key == msg.SessionKey() {
+					slog.Info("Interrupting active processing", "session", current.key)
+					current.cancel()
+				}
+				<-current.done
+				current = nil
 			}
-			if resp != nil {
-				l.bus.PublishOutbound(resp)
+
+			msgCtx, cancel := context.WithCancel(ctx)
+			done := make(chan struct{})
+			current = &activeTask{
+				cancel: cancel,
+				done:   done,
+				key:    msg.SessionKey(),
 			}
+
+			go func(msg *bus.InboundMessage, msgCtx context.Context, cancel context.CancelFunc) {
+				defer close(done)
+				defer cancel()
+
+				resp, err := l.processMessage(msgCtx, msg)
+				if err != nil {
+					if ctx.Err() != nil {
+						return // app shutting down
+					}
+					if msgCtx.Err() != nil {
+						return // interrupted by user
+					}
+					slog.Error("processing message", "err", err)
+					l.bus.PublishOutbound(&bus.OutboundMessage{
+						Channel: msg.Channel,
+						ChatID:  msg.ChatID,
+						Content: "Sorry, I ran into a technical issue while processing your message. Please try again, or start a new session with /new if the problem persists.",
+					})
+					return
+				}
+				if resp != nil {
+					l.bus.PublishOutbound(resp)
+				}
+			}(msg, msgCtx, cancel)
 		}
 	}
 }
@@ -372,6 +433,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	var toolsUsed []string
 	var mediaFiles []string
 	for i := 0; i < l.maxIterations; i++ {
+		// Check for interruption
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		// Compress context before each LLM call if approaching the limit.
 		if estimateTokens(messages) > l.contextLimit {
 			emitProgress(msg, "Compressing context...")
@@ -424,6 +490,9 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 
 			// Execute tools sequentially
 			for _, tc := range resp.ToolCalls {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				toolsUsed = append(toolsUsed, tc.Name)
 				emitProgress(msg, fmt.Sprintf("Running tool: %s", tc.Name))
 				argsJSON, _ := json.Marshal(tc.Arguments)

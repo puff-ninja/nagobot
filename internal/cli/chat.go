@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -44,8 +45,9 @@ type chatModel struct {
 	viewport viewport.Model
 	spinner  spinner.Model
 
-	history []chatEntry
-	waiting bool
+	history    []chatEntry
+	waiting    bool
+	cancelFunc context.CancelFunc
 
 	loop *agent.Loop
 	ctx  context.Context
@@ -128,9 +130,17 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			m.input.Blur()
 			m.waiting = true
+			msgCtx, cancel := context.WithCancel(m.ctx)
+			m.cancelFunc = cancel
 			m.viewport.SetContent(m.renderHistory())
 			m.viewport.GotoBottom()
-			return m, m.sendMessage(input)
+			return m, m.sendMessageWithCtx(msgCtx, input)
+		case tea.KeyEsc:
+			if m.waiting && m.cancelFunc != nil {
+				m.cancelFunc()
+				m.cancelFunc = nil
+			}
+			return m, nil
 		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyUp, tea.KeyDown:
 			var cmd tea.Cmd
 			m.viewport, cmd = m.viewport.Update(msg)
@@ -139,9 +149,14 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case llmResponseMsg:
 		m.waiting = false
+		m.cancelFunc = nil
 		focusCmd := m.input.Focus()
 		if msg.err != nil {
-			m.history = append(m.history, chatEntry{role: "error", content: msg.err.Error()})
+			if errors.Is(msg.err, context.Canceled) {
+				m.history = append(m.history, chatEntry{role: "assistant", content: "[Interrupted]"})
+			} else {
+				m.history = append(m.history, chatEntry{role: "error", content: msg.err.Error()})
+			}
 		} else {
 			m.history = append(m.history, chatEntry{role: "assistant", content: msg.content})
 		}
@@ -178,7 +193,7 @@ func (m chatModel) View() string {
 
 	var inputLine string
 	if m.waiting {
-		inputLine = fmt.Sprintf(" %s Thinking...", m.spinner.View())
+		inputLine = fmt.Sprintf(" %s Thinking... (Esc to stop)", m.spinner.View())
 	} else {
 		inputLine = " " + m.input.View()
 	}
@@ -245,9 +260,9 @@ func (m chatModel) renderStatusBar() string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func (m chatModel) sendMessage(input string) tea.Cmd {
+func (m chatModel) sendMessageWithCtx(ctx context.Context, input string) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := m.loop.ProcessDirect(m.ctx, input, "cli:default")
+		resp, err := m.loop.ProcessDirect(ctx, input, "cli:default")
 		return llmResponseMsg{content: resp, err: err}
 	}
 }
