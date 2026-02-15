@@ -115,9 +115,30 @@ go install ./cmd/nagobot/
 
 `allowFrom` 为空数组时允许所有用户。
 
+### 语音消息转文字
+
+Discord 语音消息会自动通过 Google Cloud Speech-to-Text 转录为文字。需要：
+
+1. 在 Google Cloud Console 启用 **Cloud Speech-to-Text API**
+2. 创建 API Key
+
+```json
+{
+  "services": {
+    "googleStt": {
+      "apiKey": "你的 Google Cloud API Key",
+      "languageCode": "zh-CN"
+    }
+  }
+}
+```
+
+`languageCode` 支持 [BCP-47 语言代码](https://cloud.google.com/speech-to-text/docs/languages)，默认为 `zh-CN`。未配置时语音消息不会被处理。
+
 Discord 频道基于 [discordgo](https://github.com/bwmarrin/discordgo) SDK 实现，支持：
 
 - 文本消息收发
+- 语音消息转文字（通过 Google Cloud Speech-to-Text，需配置 `services.googleStt`）
 - 文件/图片附件发送（通过 `message` 工具的 `files` 参数）
 - 接收用户发送的附件（URL 传入 Agent）
 - 消息回复引用
@@ -243,6 +264,8 @@ nagobot/
 │   │   └── anthropic.go          # Anthropic 原生实现
 │   ├── session/
 │   │   └── manager.go            # JSONL 会话持久化
+│   ├── stt/
+│   │   └── google.go             # Google Cloud Speech-to-Text 转录
 │   └── tool/
 │       ├── tool.go               # Tool 接口、ToolResult、Registry
 │       ├── filesystem.go         # 文件操作工具
@@ -299,6 +322,12 @@ nagobot/
     },
     "exec": { "timeout": 60 },
     "restrictToWorkspace": false
+  },
+  "services": {
+    "googleStt": {
+      "apiKey": "",
+      "languageCode": "zh-CN"
+    }
   }
 }
 ```
