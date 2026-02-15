@@ -8,6 +8,7 @@ type Config struct {
 	Channels  ChannelsConfig  `json:"channels"`
 	Providers ProvidersConfig `json:"providers"`
 	Tools     ToolsConfig     `json:"tools"`
+	Services  ServicesConfig  `json:"services"`
 }
 
 // WorkspacePath returns the expanded workspace path.
@@ -34,6 +35,17 @@ type AgentDefaults struct {
 // ChannelsConfig holds all channel configurations.
 type ChannelsConfig struct {
 	Discord DiscordConfig `json:"discord"`
+}
+
+// ServicesConfig holds external service configurations.
+type ServicesConfig struct {
+	GoogleSTT GoogleSTTConfig `json:"googleStt"`
+}
+
+// GoogleSTTConfig holds Google Cloud Speech-to-Text settings.
+type GoogleSTTConfig struct {
+	APIKey       string `json:"apiKey"`
+	LanguageCode string `json:"languageCode"`
 }
 
 // DiscordConfig holds Discord channel settings.

@@ -3,9 +3,12 @@ package channel
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,25 +17,28 @@ import (
 	"github.com/joebot/nagobot/internal/bus"
 	"github.com/joebot/nagobot/internal/command"
 	"github.com/joebot/nagobot/internal/config"
+	"github.com/joebot/nagobot/internal/stt"
 )
 
 // Discord implements the Channel interface using discordgo.
 type Discord struct {
-	config   config.DiscordConfig
-	bus      *bus.MessageBus
-	session  *discordgo.Session
-	commands []command.Command
+	config       config.DiscordConfig
+	bus          *bus.MessageBus
+	session      *discordgo.Session
+	commands     []command.Command
+	transcriber  stt.Transcriber
 
 	typingMu     sync.Mutex
 	typingCancel map[string]context.CancelFunc
 }
 
 // NewDiscord creates a new Discord channel.
-func NewDiscord(cfg config.DiscordConfig, b *bus.MessageBus, cmds []command.Command) *Discord {
+func NewDiscord(cfg config.DiscordConfig, b *bus.MessageBus, cmds []command.Command, t stt.Transcriber) *Discord {
 	return &Discord{
 		config:       cfg,
 		bus:          b,
 		commands:     cmds,
+		transcriber:  t,
 		typingCancel: make(map[string]context.CancelFunc),
 	}
 }
@@ -165,6 +171,33 @@ func (d *Discord) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	content := m.Content
+
+	// Transcribe voice messages / audio attachments.
+	if d.transcriber != nil {
+		for _, att := range m.Attachments {
+			if !strings.HasPrefix(att.ContentType, "audio/") {
+				continue
+			}
+			slog.Info("Downloading audio attachment for transcription", "url", att.URL, "type", att.ContentType)
+			audioData, err := downloadAttachment(att.URL)
+			if err != nil {
+				slog.Error("Failed to download audio attachment", "err", err)
+				continue
+			}
+			transcript, err := d.transcriber.Transcribe(context.Background(), audioData)
+			if err != nil {
+				slog.Error("Failed to transcribe audio", "err", err)
+				continue
+			}
+			slog.Info("Transcribed audio", "transcript", transcript)
+			if content == "" {
+				content = transcript
+			} else {
+				content = content + "\n" + transcript
+			}
+		}
+	}
+
 	if content == "" {
 		content = "[empty message]"
 	}
@@ -295,4 +328,23 @@ func (d *Discord) onInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 			"guild_id": i.GuildID,
 		},
 	})
+}
+
+// downloadAttachment fetches a Discord attachment URL and returns the raw bytes.
+func downloadAttachment(url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("download attachment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download attachment: status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read attachment body: %w", err)
+	}
+	return data, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/joebot/nagobot/internal/config"
 	"github.com/joebot/nagobot/internal/llm"
 	"github.com/joebot/nagobot/internal/logging"
+	"github.com/joebot/nagobot/internal/stt"
 )
 
 func init() {
@@ -148,7 +149,12 @@ func cmdGateway() {
 	// Start Discord if enabled
 	var discord *channel.Discord
 	if cfg.Channels.Discord.Enabled {
-		discord = channel.NewDiscord(cfg.Channels.Discord, msgBus, loop.Commands())
+		var transcriber stt.Transcriber
+		if cfg.Services.GoogleSTT.APIKey != "" {
+			transcriber = stt.NewGoogleSTT(cfg.Services.GoogleSTT.APIKey, cfg.Services.GoogleSTT.LanguageCode)
+			fmt.Println("  " + cli.OkStyle.Render("✓") + " Google STT")
+		}
+		discord = channel.NewDiscord(cfg.Channels.Discord, msgBus, loop.Commands(), transcriber)
 		msgBus.Subscribe("discord", func(ctx context.Context, msg *bus.OutboundMessage) error {
 			return discord.Send(ctx, msg)
 		})
