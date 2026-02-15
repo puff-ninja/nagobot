@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/joebot/nagobot/internal/bus"
 	"github.com/joebot/nagobot/internal/command"
@@ -227,7 +228,7 @@ func (l *Loop) Run(ctx context.Context) {
 				l.bus.PublishOutbound(&bus.OutboundMessage{
 					Channel: msg.Channel,
 					ChatID:  msg.ChatID,
-					Content: fmt.Sprintf("Sorry, I encountered an error: %s", err),
+					Content: "Sorry, I ran into a technical issue while processing your message. Please try again, or start a new session with /new if the problem persists.",
 				})
 				continue
 			}
@@ -262,6 +263,30 @@ func (l *Loop) ProcessDirect(ctx context.Context, content, sessionKey string) (s
 		return "", nil
 	}
 	return resp.Content, nil
+}
+
+// chatWithRetry wraps provider.Chat with automatic retries for transient errors
+// (network issues, rate limits, overloaded models). Uses exponential backoff.
+func chatWithRetry(ctx context.Context, provider llm.Provider, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	const maxRetries = 2
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(attempt) * 2 * time.Second
+			slog.Warn("LLM call failed, retrying", "attempt", attempt, "err", lastErr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		resp, err := provider.Chat(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bus.OutboundMessage, error) {
@@ -328,7 +353,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 			messages = l.compressMessages(ctx, messages)
 		}
 
-		resp, err := l.provider.Chat(ctx, llm.ChatRequest{
+		resp, err := chatWithRetry(ctx, l.provider, llm.ChatRequest{
 			Messages: messages,
 			Tools:    l.tools.Definitions(),
 			Model:    l.model,

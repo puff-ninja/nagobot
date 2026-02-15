@@ -123,7 +123,7 @@ func (m *SubagentManager) executeTask(ctx context.Context, taskID, task string) 
 
 	maxIterations := 15
 	for i := 0; i < maxIterations; i++ {
-		resp, err := m.provider.Chat(ctx, llm.ChatRequest{
+		resp, err := chatWithRetry(ctx, m.provider, llm.ChatRequest{
 			Messages: messages,
 			Tools:    tools.Definitions(),
 			Model:    m.model,
@@ -265,7 +265,7 @@ func ProcessSystemMessage(
 
 	var finalContent string
 	for i := 0; i < maxIterations; i++ {
-		resp, err := provider.Chat(ctx, llm.ChatRequest{
+		resp, err := chatWithRetry(ctx, provider, llm.ChatRequest{
 			Messages: messages,
 			Tools:    tools.Definitions(),
 			Model:    model,

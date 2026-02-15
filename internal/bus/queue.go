@@ -57,9 +57,51 @@ func (b *MessageBus) DispatchOutbound(ctx context.Context) {
 			b.mu.RUnlock()
 			for _, h := range handlers {
 				if err := h(ctx, msg); err != nil {
-					slog.Error("dispatch outbound", "channel", msg.Channel, "err", err)
+					slog.Warn("dispatch outbound failed, attempting recovery", "channel", msg.Channel, "err", err)
+					b.recoverSend(ctx, h, msg, err)
 				}
 			}
 		}
+	}
+}
+
+// recoverSend tries fallback strategies when an outbound message fails to send.
+// It attempts progressively simpler messages, and as a last resort sends a
+// short error notification so the user knows something went wrong.
+func (b *MessageBus) recoverSend(ctx context.Context, h OutboundHandler, original *OutboundMessage, originalErr error) {
+	// Strategy 1: retry without media attachments.
+	if len(original.Media) > 0 {
+		noMedia := &OutboundMessage{
+			Channel: original.Channel,
+			ChatID:  original.ChatID,
+			Content: original.Content,
+		}
+		if err := h(ctx, noMedia); err == nil {
+			slog.Info("recovery: sent without media attachments", "channel", original.Channel)
+			return
+		}
+	}
+
+	// Strategy 2: retry with truncated content.
+	if len(original.Content) > 1500 {
+		truncated := &OutboundMessage{
+			Channel: original.Channel,
+			ChatID:  original.ChatID,
+			Content: original.Content[:1500] + "\n\n[message truncated]",
+		}
+		if err := h(ctx, truncated); err == nil {
+			slog.Info("recovery: sent truncated message", "channel", original.Channel)
+			return
+		}
+	}
+
+	// Strategy 3: send a brief error notification to the user.
+	fallback := &OutboundMessage{
+		Channel: original.Channel,
+		ChatID:  original.ChatID,
+		Content: "Sorry, I ran into a technical issue and couldn't deliver my response. Please try again.",
+	}
+	if err := h(ctx, fallback); err != nil {
+		slog.Error("recovery: all strategies failed, unable to notify user", "channel", original.Channel, "err", err)
 	}
 }
