@@ -382,7 +382,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 			if i > 0 {
 				messages = append(messages, map[string]any{
 					"role":    "user",
-					"content": "Reflect on the results and decide next steps.",
+					"content": "[SYSTEM] Review the tool results above. If you have enough information, respond directly to the user's original request. If not, make additional tool calls. Do NOT output any reflection or meta-commentary — just answer the user or call tools.",
 				})
 			}
 		} else {
