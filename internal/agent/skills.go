@@ -131,6 +131,18 @@ func (s *SkillsLoader) GetAlwaysSkills() []string {
 	return result
 }
 
+// GetAvailableSkills returns names of all skills whose requirements are met.
+func (s *SkillsLoader) GetAvailableSkills() []string {
+	var result []string
+	for _, skill := range s.ListSkills() {
+		meta := s.parseSkillMeta(skill)
+		if s.checkRequirements(meta) {
+			result = append(result, skill.Name)
+		}
+	}
+	return result
+}
+
 // LoadSkillsForContext loads and formats skills content for inclusion in the system prompt.
 func (s *SkillsLoader) LoadSkillsForContext(names []string) string {
 	var parts []string
@@ -177,6 +189,28 @@ func (s *SkillsLoader) BuildSkillsSummary() string {
 	}
 	lines = append(lines, "</skills>")
 
+	return strings.Join(lines, "\n")
+}
+
+// BuildUnavailableSkillsSummary generates an XML summary of skills whose requirements are NOT met.
+func (s *SkillsLoader) BuildUnavailableSkillsSummary() string {
+	allSkills := s.ListSkills()
+	var lines []string
+	for _, skill := range allSkills {
+		meta := s.parseSkillMeta(skill)
+		if s.checkRequirements(meta) {
+			continue // skip available skills
+		}
+		desc := meta.Description
+		if desc == "" {
+			desc = skill.Name
+		}
+		lines = append(lines, fmt.Sprintf("- **%s**: %s (missing: %s)",
+			skill.Name, desc, s.getMissingRequirements(meta)))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
 	return strings.Join(lines, "\n")
 }
 

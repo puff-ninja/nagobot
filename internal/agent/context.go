@@ -41,21 +41,16 @@ func (c *ContextBuilder) BuildSystemPrompt() string {
 		parts = append(parts, "# Memory\n\n"+mem)
 	}
 
-	// Always-loaded skills: include full content
-	if alwaysSkills := c.skills.GetAlwaysSkills(); len(alwaysSkills) > 0 {
-		if content := c.skills.LoadSkillsForContext(alwaysSkills); content != "" {
-			parts = append(parts, "# Active Skills\n\n"+content)
+	// Load all available skills directly into the system prompt.
+	if availableSkills := c.skills.GetAvailableSkills(); len(availableSkills) > 0 {
+		if content := c.skills.LoadSkillsForContext(availableSkills); content != "" {
+			parts = append(parts, "# Skills\n\nThe following skills extend your capabilities. When a user's request matches a skill, you MUST follow the skill's instructions and use the tools it specifies (e.g. exec with curl). Do NOT substitute with other tools like web_fetch unless the skill's method fails.\n\n"+content)
 		}
 	}
 
-	// Available skills: show summary only (agent uses read_file to load)
-	if summary := c.skills.BuildSkillsSummary(); summary != "" {
-		parts = append(parts, `# Skills
-
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-Skills with available="false" need dependencies installed first.
-
-`+summary)
+	// Show summary for unavailable skills (missing dependencies).
+	if summary := c.skills.BuildUnavailableSkillsSummary(); summary != "" {
+		parts = append(parts, "# Unavailable Skills\n\nThese skills need dependencies installed before use.\n\n"+summary)
 	}
 
 	return strings.Join(parts, "\n\n---\n\n")

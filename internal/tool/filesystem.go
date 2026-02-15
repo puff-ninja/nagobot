@@ -55,18 +55,23 @@ func (t *ReadFileTool) Execute(_ context.Context, params map[string]any) (ToolRe
 	if err != nil {
 		return ToolResult{}, err
 	}
+
+	// Try embedded FS for paths containing "builtin_skills/".
+	// The LLM may provide the path with or without a prefix (e.g. workspace path).
+	if t.EmbedFS != nil {
+		if embedPath := extractEmbedPath(path); embedPath != "" {
+			if data, embedErr := fs.ReadFile(t.EmbedFS, embedPath); embedErr == nil {
+				return ToolResult{Content: string(data)}, nil
+			}
+		}
+	}
+
 	resolved, err := resolvePath(path, t.AllowedDir)
 	if err != nil {
 		return ToolResult{Content: fmt.Sprintf("Error: %s", err)}, nil
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		// Try embedded FS fallback for paths like "builtin_skills/..."
-		if t.EmbedFS != nil {
-			if data, embedErr := fs.ReadFile(t.EmbedFS, path); embedErr == nil {
-				return ToolResult{Content: string(data)}, nil
-			}
-		}
 		return ToolResult{Content: fmt.Sprintf("Error: File not found: %s", path)}, nil
 	}
 	if info.IsDir() {
@@ -244,4 +249,15 @@ func (t *ListDirTool) Execute(_ context.Context, params map[string]any) (ToolRes
 		lines = append(lines, prefix+e.Name())
 	}
 	return ToolResult{Content: strings.Join(lines, "\n")}, nil
+}
+
+// extractEmbedPath extracts the "builtin_skills/..." suffix from a path.
+// Handles paths like "builtin_skills/weather/SKILL.md",
+// "/home/user/.nagobot/workspace/builtin_skills/weather/SKILL.md", etc.
+func extractEmbedPath(path string) string {
+	const marker = "builtin_skills/"
+	if i := strings.Index(path, marker); i >= 0 {
+		return path[i:]
+	}
+	return ""
 }

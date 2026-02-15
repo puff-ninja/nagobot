@@ -6,7 +6,7 @@ metadata: {"nagobot":{"requires":{"bins":["curl"]}}}
 
 # Weather
 
-Two free services, no API keys needed.
+Use the **exec** tool to run `curl` commands below. Do NOT use web_fetch — these services return plain text best handled by curl.
 
 ## wttr.in (primary)
 
