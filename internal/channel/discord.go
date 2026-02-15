@@ -88,6 +88,7 @@ func (d *Discord) Stop() error {
 }
 
 // Send sends a message (with optional file attachments) to a Discord channel.
+// Messages exceeding Discord's 2000-character limit are split at line boundaries.
 func (d *Discord) Send(ctx context.Context, msg *bus.OutboundMessage) error {
 	defer d.stopTyping(msg.ChatID)
 
@@ -95,18 +96,8 @@ func (d *Discord) Send(ctx context.Context, msg *bus.OutboundMessage) error {
 		return fmt.Errorf("discord session not open")
 	}
 
-	ms := &discordgo.MessageSend{
-		Content: msg.Content,
-	}
-
-	if msg.ReplyTo != "" {
-		ms.Reference = &discordgo.MessageReference{MessageID: msg.ReplyTo}
-		ms.AllowedMentions = &discordgo.MessageAllowedMentions{
-			RepliedUser: false,
-		}
-	}
-
-	// Attach files from local paths.
+	// Collect file attachments.
+	var files []*discordgo.File
 	var openFiles []*os.File
 	defer func() {
 		for _, f := range openFiles {
@@ -120,28 +111,56 @@ func (d *Discord) Send(ctx context.Context, msg *bus.OutboundMessage) error {
 			continue
 		}
 		openFiles = append(openFiles, f)
-		ms.Files = append(ms.Files, &discordgo.File{
+		files = append(files, &discordgo.File{
 			Name:   filepath.Base(filePath),
 			Reader: f,
 		})
 	}
 
-	if len(ms.Files) > 0 {
-		names := make([]string, len(ms.Files))
-		for i, f := range ms.Files {
+	if len(files) > 0 {
+		names := make([]string, len(files))
+		for i, f := range files {
 			names[i] = f.Name
 		}
 		slog.Info("Discord sending media attachments", "channel", msg.ChatID, "files", names)
 	}
 
+	// Split content into chunks that fit Discord's 2000-char limit.
+	chunks := splitMessage(msg.Content, 2000)
+
+	for i, chunk := range chunks {
+		ms := &discordgo.MessageSend{Content: chunk}
+
+		// Reply reference only on the first chunk.
+		if i == 0 && msg.ReplyTo != "" {
+			ms.Reference = &discordgo.MessageReference{MessageID: msg.ReplyTo}
+			ms.AllowedMentions = &discordgo.MessageAllowedMentions{
+				RepliedUser: false,
+			}
+		}
+
+		// Attach files only to the last chunk.
+		if i == len(chunks)-1 && len(files) > 0 {
+			ms.Files = files
+		}
+
+		if err := d.sendWithRetry(msg.ChatID, ms); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// sendWithRetry sends a message with exponential backoff on rate limits.
+func (d *Discord) sendWithRetry(channelID string, ms *discordgo.MessageSend) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		_, err := d.session.ChannelMessageSendComplex(msg.ChatID, ms)
+		_, err := d.session.ChannelMessageSendComplex(channelID, ms)
 		if err == nil {
 			return nil
 		}
 
-		// Check for rate limiting via discordgo's REST error.
 		if restErr, ok := err.(*discordgo.RESTError); ok {
 			if restErr.Response != nil && restErr.Response.StatusCode == 429 {
 				slog.Warn("Discord rate limited, retrying", "attempt", attempt)
@@ -157,6 +176,35 @@ func (d *Discord) Send(ctx context.Context, msg *bus.OutboundMessage) error {
 		}
 	}
 	return fmt.Errorf("send discord message: %w", lastErr)
+}
+
+// splitMessage splits text into chunks of at most maxLen characters.
+// It tries to split at newline boundaries to preserve formatting.
+func splitMessage(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+
+	var chunks []string
+	for len(text) > 0 {
+		if len(text) <= maxLen {
+			chunks = append(chunks, text)
+			break
+		}
+
+		// Find the last newline within the limit.
+		cut := strings.LastIndex(text[:maxLen], "\n")
+		if cut <= 0 {
+			// No newline found; hard cut at limit.
+			cut = maxLen
+		} else {
+			cut++ // include the newline in the current chunk
+		}
+
+		chunks = append(chunks, text[:cut])
+		text = text[cut:]
+	}
+	return chunks
 }
 
 func (d *Discord) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/joebot/nagobot/internal/config"
 	"github.com/joebot/nagobot/internal/tool"
@@ -109,7 +110,10 @@ func (t *MCPBridgeTool) Description() string  { return t.mcpTool.Description }
 func (t *MCPBridgeTool) Parameters() map[string]any { return t.mcpTool.InputSchema }
 
 func (t *MCPBridgeTool) Execute(ctx context.Context, params map[string]any) (tool.ToolResult, error) {
-	text, err := t.client.CallTool(ctx, t.mcpTool.Name, params)
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	text, err := t.client.CallTool(callCtx, t.mcpTool.Name, params)
 	if err != nil {
 		return tool.ToolResult{Content: fmt.Sprintf("MCP tool error: %s", err)}, nil
 	}
