@@ -435,13 +435,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 				messages = l.context.AddToolResult(messages, tc.ID, tc.Name, result.Content)
 			}
 
-			// Interleaved CoT: reflect before next action (only in multi-step chains)
-			if i > 0 {
-				messages = append(messages, map[string]any{
-					"role":    "user",
-					"content": "[SYSTEM] Review the tool results above. If you have enough information, respond directly to the user's original request. If not, make additional tool calls. Do NOT output any reflection or meta-commentary — just answer the user or call tools.",
-				})
-			}
+			// Inject reflection prompt to guide next action
+			messages = append(messages, map[string]any{
+				"role":    "user",
+				"content": "[SYSTEM] Review the tool results above. If you have enough information, respond to the user's original request. If files were generated that the user needs, use the 'message' tool with the 'files' parameter to deliver them — your text response alone cannot send files. Do NOT output reflection or meta-commentary — just answer the user or call tools.",
+			})
 		} else {
 			finalContent = resp.Content
 			break
