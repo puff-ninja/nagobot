@@ -322,6 +322,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 
 	// Consolidate memory if session is too large
 	if len(sess.Messages) > l.memoryWindow {
+		emitProgress(msg, "Consolidating memory...")
 		l.consolidateMemory(ctx, sess, false)
 	}
 
@@ -350,9 +351,11 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 	for i := 0; i < l.maxIterations; i++ {
 		// Compress context before each LLM call if approaching the limit.
 		if estimateTokens(messages) > l.contextLimit {
+			emitProgress(msg, "Compressing context...")
 			messages = l.compressMessages(ctx, messages)
 		}
 
+		emitProgress(msg, "Thinking...")
 		resp, err := chatWithRetry(ctx, l.provider, llm.ChatRequest{
 			Messages: messages,
 			Tools:    l.tools.Definitions(),
@@ -399,6 +402,7 @@ func (l *Loop) processMessage(ctx context.Context, msg *bus.InboundMessage) (*bu
 			// Execute tools sequentially
 			for _, tc := range resp.ToolCalls {
 				toolsUsed = append(toolsUsed, tc.Name)
+				emitProgress(msg, fmt.Sprintf("Running tool: %s", tc.Name))
 				argsJSON, _ := json.Marshal(tc.Arguments)
 				slog.Info("Tool call", "tool", tc.Name, "args", truncate(string(argsJSON), 200))
 				result := l.tools.Execute(ctx, tc.Name, tc.Arguments)
@@ -665,4 +669,11 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// emitProgress calls the inbound message's progress callback if set.
+func emitProgress(msg *bus.InboundMessage, status string) {
+	if msg.ProgressFunc != nil {
+		msg.ProgressFunc(status)
+	}
 }

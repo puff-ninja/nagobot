@@ -4,13 +4,14 @@ import "time"
 
 // InboundMessage is a message received from a chat channel.
 type InboundMessage struct {
-	Channel   string
-	SenderID  string
-	ChatID    string
-	Content   string
-	Timestamp time.Time
-	Media     []string
-	Metadata  map[string]any
+	Channel      string
+	SenderID     string
+	ChatID       string
+	Content      string
+	Timestamp    time.Time
+	Media        []string
+	Metadata     map[string]any
+	ProgressFunc func(status string) // optional callback for progress updates
 }
 
 // SessionKey returns the unique key for session identification.

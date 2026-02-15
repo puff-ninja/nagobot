@@ -30,6 +30,9 @@ type Discord struct {
 
 	typingMu     sync.Mutex
 	typingCancel map[string]context.CancelFunc
+
+	progressMu   sync.Mutex
+	progressMsgs map[string]string // channelID → progress message ID
 }
 
 // NewDiscord creates a new Discord channel.
@@ -40,6 +43,7 @@ func NewDiscord(cfg config.DiscordConfig, b *bus.MessageBus, cmds []command.Comm
 		commands:     cmds,
 		transcriber:  t,
 		typingCancel: make(map[string]context.CancelFunc),
+		progressMsgs: make(map[string]string),
 	}
 }
 
@@ -91,6 +95,7 @@ func (d *Discord) Stop() error {
 // Messages exceeding Discord's 2000-character limit are split at line boundaries.
 func (d *Discord) Send(ctx context.Context, msg *bus.OutboundMessage) error {
 	defer d.stopTyping(msg.ChatID)
+	d.clearProgress(msg.ChatID)
 
 	if d.session == nil {
 		return fmt.Errorf("discord session not open")
@@ -266,13 +271,14 @@ func (d *Discord) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	d.bus.PublishInbound(&bus.InboundMessage{
-		Channel:   "discord",
-		SenderID:  m.Author.ID,
-		ChatID:    m.ChannelID,
-		Content:   content,
-		Timestamp: time.Now(),
-		Media:     media,
-		Metadata:  metadata,
+		Channel:      "discord",
+		SenderID:     m.Author.ID,
+		ChatID:       m.ChannelID,
+		Content:      content,
+		Timestamp:    time.Now(),
+		Media:        media,
+		Metadata:     metadata,
+		ProgressFunc: d.makeProgressFunc(m.ChannelID),
 	})
 }
 
@@ -304,6 +310,61 @@ func (d *Discord) stopTyping(channelID string) {
 	if cancel, ok := d.typingCancel[channelID]; ok {
 		cancel()
 		delete(d.typingCancel, channelID)
+	}
+}
+
+// updateProgress sends or edits a progress message in a Discord channel.
+// The first call sends a new message; subsequent calls edit it in place.
+func (d *Discord) updateProgress(channelID, status string) {
+	if d.session == nil {
+		return
+	}
+
+	d.progressMu.Lock()
+	msgID, exists := d.progressMsgs[channelID]
+	d.progressMu.Unlock()
+
+	if exists {
+		_, err := d.session.ChannelMessageEdit(channelID, msgID, status)
+		if err != nil {
+			slog.Debug("progress edit failed", "channel", channelID, "err", err)
+		}
+		return
+	}
+
+	// First progress update: stop typing indicator and send a new message.
+	d.stopTyping(channelID)
+	msg, err := d.session.ChannelMessageSend(channelID, status)
+	if err != nil {
+		slog.Debug("progress send failed", "channel", channelID, "err", err)
+		return
+	}
+
+	d.progressMu.Lock()
+	d.progressMsgs[channelID] = msg.ID
+	d.progressMu.Unlock()
+}
+
+// clearProgress deletes the progress message for a channel, if any.
+func (d *Discord) clearProgress(channelID string) {
+	d.progressMu.Lock()
+	msgID, exists := d.progressMsgs[channelID]
+	if exists {
+		delete(d.progressMsgs, channelID)
+	}
+	d.progressMu.Unlock()
+
+	if exists {
+		if err := d.session.ChannelMessageDelete(channelID, msgID); err != nil {
+			slog.Debug("progress delete failed", "channel", channelID, "err", err)
+		}
+	}
+}
+
+// makeProgressFunc creates a ProgressFunc callback for a specific channel.
+func (d *Discord) makeProgressFunc(channelID string) func(string) {
+	return func(status string) {
+		d.updateProgress(channelID, status)
 	}
 }
 
@@ -367,14 +428,15 @@ func (d *Discord) onInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 	d.startTyping(i.ChannelID)
 
 	d.bus.PublishInbound(&bus.InboundMessage{
-		Channel:   "discord",
-		SenderID:  userID,
-		ChatID:    i.ChannelID,
-		Content:   "/" + cmdName,
+		Channel:  "discord",
+		SenderID: userID,
+		ChatID:   i.ChannelID,
+		Content:  "/" + cmdName,
 		Timestamp: time.Now(),
 		Metadata: map[string]any{
 			"guild_id": i.GuildID,
 		},
+		ProgressFunc: d.makeProgressFunc(i.ChannelID),
 	})
 }
 
