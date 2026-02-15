@@ -17,6 +17,7 @@ import (
 	"github.com/joebot/nagobot/internal/config"
 	"github.com/joebot/nagobot/internal/llm"
 	"github.com/joebot/nagobot/internal/logging"
+	"github.com/joebot/nagobot/internal/mcp"
 	"github.com/joebot/nagobot/internal/stt"
 )
 
@@ -93,6 +94,12 @@ func cmdAgent() {
 		BraveAPIKey:         cfg.Tools.Web.Search.APIKey,
 	})
 
+	// Initialize MCP servers.
+	mcpMgr := initMCP(cfg, loop)
+	if mcpMgr != nil {
+		defer mcpMgr.Close()
+	}
+
 	// Check for -m flag
 	message := ""
 	for i := 2; i < len(os.Args); i++ {
@@ -146,6 +153,13 @@ func cmdGateway() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Initialize MCP servers.
+	mcpMgr := initMCP(cfg, loop)
+	if mcpMgr != nil {
+		defer mcpMgr.Close()
+		fmt.Printf("  "+cli.OkStyle.Render("✓")+" MCP (%d tools from %v)\n", mcpMgr.ToolCount(), mcpMgr.ServerNames())
+	}
+
 	// Start Discord if enabled
 	var discord *channel.Discord
 	if cfg.Channels.Discord.Enabled {
@@ -183,6 +197,21 @@ func cmdGateway() {
 	if discord != nil {
 		discord.Stop()
 	}
+}
+
+// initMCP connects to configured MCP servers and registers their tools.
+// Returns nil if no servers are configured.
+func initMCP(cfg *config.Config, loop *agent.Loop) *mcp.Manager {
+	if len(cfg.MCP.Servers) == 0 {
+		return nil
+	}
+	mgr, err := mcp.NewManager(context.Background(), cfg.MCP)
+	if err != nil {
+		slog.Error("MCP initialization failed", "err", err)
+		return nil
+	}
+	mgr.RegisterTools(loop.ToolRegistry())
+	return mgr
 }
 
 // --- status command ---

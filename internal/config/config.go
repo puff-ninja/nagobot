@@ -9,6 +9,24 @@ type Config struct {
 	Providers ProvidersConfig `json:"providers"`
 	Tools     ToolsConfig     `json:"tools"`
 	Services  ServicesConfig  `json:"services"`
+	MCP       MCPConfig       `json:"mcp"`
+}
+
+// MCPConfig holds MCP (Model Context Protocol) settings.
+type MCPConfig struct {
+	Servers map[string]MCPServerConfig `json:"servers"`
+}
+
+// MCPServerConfig holds a single MCP server's configuration.
+// Use Command for stdio transport, URL for HTTP transport.
+type MCPServerConfig struct {
+	// stdio transport
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	// HTTP transport
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // WorkspacePath returns the expanded workspace path.

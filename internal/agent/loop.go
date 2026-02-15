@@ -118,6 +118,11 @@ func (l *Loop) Commands() []command.Command {
 	return l.slashDefs
 }
 
+// ToolRegistry returns the tool registry for external tool registration.
+func (l *Loop) ToolRegistry() *tool.Registry {
+	return l.tools
+}
+
 func (l *Loop) registerSlashCommands() {
 	l.registerCommand("new", "Start a new conversation", l.handleNew)
 	l.registerCommand("compact", "Compress current context", l.handleCompact)
