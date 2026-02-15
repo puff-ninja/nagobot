@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,7 @@ func resolvePath(path string, allowedDir string) (string, error) {
 // ReadFileTool reads file contents.
 type ReadFileTool struct {
 	AllowedDir string
+	EmbedFS    fs.FS // optional fallback for embedded files (e.g. builtin skills)
 }
 
 func (t *ReadFileTool) Name() string        { return "read_file" }
@@ -59,6 +61,12 @@ func (t *ReadFileTool) Execute(_ context.Context, params map[string]any) (ToolRe
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
+		// Try embedded FS fallback for paths like "builtin_skills/..."
+		if t.EmbedFS != nil {
+			if data, embedErr := fs.ReadFile(t.EmbedFS, path); embedErr == nil {
+				return ToolResult{Content: string(data)}, nil
+			}
+		}
 		return ToolResult{Content: fmt.Sprintf("Error: File not found: %s", path)}, nil
 	}
 	if info.IsDir() {

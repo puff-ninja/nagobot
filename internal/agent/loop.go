@@ -95,7 +95,7 @@ func (l *Loop) registerDefaultTools(cfg LoopConfig) {
 	if cfg.RestrictToWorkspace {
 		allowedDir = cfg.Workspace
 	}
-	l.tools.Register(&tool.ReadFileTool{AllowedDir: allowedDir})
+	l.tools.Register(&tool.ReadFileTool{AllowedDir: allowedDir, EmbedFS: builtinSkillsFS})
 	l.tools.Register(&tool.WriteFileTool{AllowedDir: allowedDir})
 	l.tools.Register(&tool.EditFileTool{AllowedDir: allowedDir})
 	l.tools.Register(&tool.ListDirTool{AllowedDir: allowedDir})

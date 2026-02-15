@@ -109,7 +109,7 @@ func (m *SubagentManager) executeTask(ctx context.Context, taskID, task string) 
 	if m.restrictToWorkspace {
 		allowedDir = m.workspace
 	}
-	tools.Register(&tool.ReadFileTool{AllowedDir: allowedDir})
+	tools.Register(&tool.ReadFileTool{AllowedDir: allowedDir, EmbedFS: builtinSkillsFS})
 	tools.Register(&tool.WriteFileTool{AllowedDir: allowedDir})
 	tools.Register(&tool.EditFileTool{AllowedDir: allowedDir})
 	tools.Register(&tool.ListDirTool{AllowedDir: allowedDir})
