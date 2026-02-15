@@ -261,7 +261,10 @@ func initMCP(cfg *config.Config, loop *agent.Loop) *mcp.Manager {
 // --- status command ---
 
 func cmdStatus() {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Println(cli.ErrStyle.Render("  Config error: " + err.Error()))
+	}
 	cli.RunStatus(cfg)
 }
 
@@ -282,7 +285,8 @@ func redirectLogs() {
 func mustLoadConfig() *config.Config {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+		fmt.Println(cli.ErrStyle.Render("  Config error: " + err.Error()))
+		os.Exit(1)
 	}
 	return cfg
 }

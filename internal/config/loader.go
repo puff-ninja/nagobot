@@ -74,6 +74,16 @@ func LoadFrom(path string) (*Config, error) {
 		cfg.Tools.Exec.Timeout = 60
 	}
 
+	// Validate
+	var problems []string
+	for _, path := range CheckUnknownFields(raw) {
+		problems = append(problems, "unknown field: "+path)
+	}
+	problems = append(problems, cfg.validate()...)
+	if len(problems) > 0 {
+		return cfg, fmt.Errorf("config validation failed:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+
 	return cfg, nil
 }
 
