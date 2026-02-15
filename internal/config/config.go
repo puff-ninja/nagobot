@@ -57,7 +57,14 @@ type ChannelsConfig struct {
 
 // ServicesConfig holds external service configurations.
 type ServicesConfig struct {
-	GoogleSTT GoogleSTTConfig `json:"googleStt"`
+	GoogleSTT GoogleSTTConfig  `json:"googleStt"`
+	Heartbeat HeartbeatConfig  `json:"heartbeat"`
+}
+
+// HeartbeatConfig holds heartbeat service settings.
+type HeartbeatConfig struct {
+	Enabled    bool `json:"enabled"`
+	IntervalS  int  `json:"intervalSeconds"`
 }
 
 // GoogleSTTConfig holds Google Cloud Speech-to-Text settings.

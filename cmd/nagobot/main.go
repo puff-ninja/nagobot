@@ -9,12 +9,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/joebot/nagobot/internal/agent"
 	"github.com/joebot/nagobot/internal/bus"
 	"github.com/joebot/nagobot/internal/channel"
 	"github.com/joebot/nagobot/internal/cli"
 	"github.com/joebot/nagobot/internal/config"
+	"github.com/joebot/nagobot/internal/heartbeat"
 	"github.com/joebot/nagobot/internal/llm"
 	"github.com/joebot/nagobot/internal/logging"
 	"github.com/joebot/nagobot/internal/mcp"
@@ -189,6 +191,16 @@ func cmdGateway() {
 				slog.Error("Discord channel error", "err", err)
 			}
 		}()
+	}
+
+	// Start heartbeat service if enabled
+	if cfg.Services.Heartbeat.Enabled {
+		interval := time.Duration(cfg.Services.Heartbeat.IntervalS) * time.Second
+		hb := heartbeat.NewService(cfg.WorkspacePath(), interval, func(ctx context.Context, prompt, sessionKey string) (string, error) {
+			return loop.ProcessDirect(ctx, prompt, sessionKey)
+		})
+		go hb.Run(ctx)
+		fmt.Println("  " + cli.OkStyle.Render("✓") + " Heartbeat" + cli.DimStyle.Render(fmt.Sprintf(" (every %s)", interval)))
 	}
 
 	fmt.Println(cli.DimStyle.Render("  Press Ctrl+C to stop"))
